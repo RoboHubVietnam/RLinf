@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""GR00T embodiment models (N1.5 / N1.6) with shared I/O utilities."""
+"""GR00T embodiment models (N1.5 / N1.6 / N1.7 + N1.5 CFG) with shared I/O utilities."""
 
 import torch
 from omegaconf import DictConfig
@@ -20,6 +20,12 @@ from omegaconf import DictConfig
 
 def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     model_type = str(cfg.get("model_type", "gr00t"))
+
+    if model_type == "gr00t_n1d7":
+        from rlinf.models.embodiment.gr00t.gr00t_n1d7 import get_model as get_model_n1d7
+
+        return get_model_n1d7(cfg, torch_dtype)
+
     if model_type == "gr00t_n1d6":
         from rlinf.models.embodiment.gr00t.gr00t_n1d6 import get_model as get_model_n1d6
 
@@ -39,7 +45,8 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
 
     raise ValueError(
         f"Unsupported GR00T model_type: {model_type!r}. "
-        f"Supported values: ['gr00t', 'gr00t_n1d5', 'gr00t_n1d6', 'gr00t_cfg']."
+        f"Supported values: ['gr00t', 'gr00t_n1d5', 'gr00t_n1d6', 'gr00t_n1d7', "
+        f"'gr00t_cfg']."
     )
 
 
