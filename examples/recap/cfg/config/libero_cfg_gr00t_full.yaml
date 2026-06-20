@@ -1,0 +1,99 @@
+# RECAP stage 4 — full-scale CFG training for GR00T N1.5 on the LIBERO-Long
+# SFT + rollout mix (rollout provides NEGATIVE advantages). Saves checkpoints
+# every save_interval for per-checkpoint eval.
+
+defaults:
+  - training_backend/fsdp@actor.fsdp_config
+  - _self_
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/sft/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "cfg_gr00t_libero10_full"
+    logger_backends: ["tensorboard"]
+  max_epochs: 30000
+  max_steps: 5000
+  val_check_interval: -1
+  save_interval: 1000
+
+data:
+  num_workers: 0
+  advantage_tag: "full"
+  video_backend: "torchcodec"
+  balance_dataset_weights: true
+  seed: 42
+  train_data_paths:
+    - dataset_path: "/data/datasets/libero_10_no_noops_lerobot"
+      type: "sft"
+      weight: 1.0
+    - dataset_path: "/data/datasets/libero_10_gr00t_rollouts"
+      type: "rollout"
+      weight: 1.0
+
+algorithm:
+  adv_type: gae
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 2
+  global_batch_size: 16
+  seed: 0
+  model:
+    precision: bf16
+    is_lora: false
+    load_to_device: true
+    model_path: "/data/checkpoints/RLinf-Gr00t-SFT-10"
+    model_type: "gr00t_cfg"
+    embodiment_tag: "libero_franka"
+    num_action_chunks: 8
+    obs_converter_type: "libero"
+    denoising_steps: 4
+    tune_visual: false
+    tune_llm: false
+    advantage_cfg_dropout_prob: 0.3
+    cfg_guidance_weight: 1.0
+    positive_only_conditional: false
+  optim:
+    lr: 1.0e-5
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    weight_decay: 1.0e-10
+    clip_grad: 1.0
+    lr_scheduler: "cosine"
+    lr_warmup_steps: 500
+    total_training_steps: 5000
+    min_lr: 0.0
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    use_orig_params: True
+    # False: only the small action head trains (backbone frozen), so recompute
+    # saves little, and gradient checkpointing previously triggered a separate
+    # NaN loss. Verified-stable setting.
+    gradient_checkpointing: False
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: fp32
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: False
+critic:
+  use_critic_model: False

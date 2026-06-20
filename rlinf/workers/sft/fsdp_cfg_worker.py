@@ -29,15 +29,6 @@ import torch
 from omegaconf import DictConfig
 from torch.utils._pytree import tree_map
 
-from rlinf.data.datasets.recap.cfg_model import (
-    AdvantagePreservingDataset,
-    CFGDataLoaderImpl,
-    CfgMixtureDataset,
-    TokenizePromptWithGuidance,
-)
-from rlinf.data.datasets.recap.utils import (
-    cast_image_features,
-)
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
 from rlinf.scheduler import Cluster, Worker
 from rlinf.utils.distributed import all_reduce_dict
@@ -134,10 +125,23 @@ class FSDPCfgWorker(FSDPSftWorker):
 
     def build_dataloader(self):
         """Build CFG dataloader with advantage-weighted sampling across datasets."""
+        # GR00T CFG path: GR00T reads LeRobot data with its own pipeline (no
+        # openpi/lerobot package), so branch before the OpenPI-specific imports.
+        if str(self.cfg.actor.model.get("model_type", "")) == "gr00t_cfg":
+            from rlinf.data.datasets.recap.gr00t_cfg import build_gr00t_cfg_dataloader
+
+            return build_gr00t_cfg_dataloader(self.cfg, self._world_size, self._rank)
+
         import lerobot.common.datasets.lerobot_dataset as lerobot_dataset
         import openpi.training.data_loader as openpi_data_loader
         import openpi.transforms as transforms
 
+        from rlinf.data.datasets.recap.cfg_model import (
+            AdvantagePreservingDataset,
+            CFGDataLoaderImpl,
+            CfgMixtureDataset,
+        )
+        from rlinf.data.datasets.recap.utils import cast_image_features
         from rlinf.data.lerobot_paths import resolve_lerobot_dataset_root
         from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
 
@@ -253,6 +257,8 @@ class FSDPCfgWorker(FSDPSftWorker):
 
     def _build_model_transforms(self, data_config: Any) -> list:
         """Replace TokenizePrompt with TokenizePromptWithGuidance in model transforms."""
+        from rlinf.data.datasets.recap.cfg_model import TokenizePromptWithGuidance
+
         tokenizer = None
         for t in data_config.model_transforms.inputs:
             if hasattr(t, "tokenizer"):

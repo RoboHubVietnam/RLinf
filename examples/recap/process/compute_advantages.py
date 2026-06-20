@@ -202,6 +202,10 @@ KEY_MAPPINGS = {
         "task": "prompt",
     },
     "libero": {
+        # LeRobot v2.x (IPEC) key format
+        "observation.images.image": "observation/image",
+        "observation.images.wrist_image": "observation/wrist_image",
+        # Older / flat key formats
         "observation.image": "observation/image",
         "observation.wrist_image": "observation/wrist_image",
         "observation.state": "observation/state",

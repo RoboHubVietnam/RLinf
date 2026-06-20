@@ -1,0 +1,29 @@
+# Compute RECAP returns for the LIBERO-Long SFT dataset (GR00T).
+#
+# Usage:
+#   cd examples/recap/process
+#   python compute_returns.py --config-name compute_returns_libero
+#
+# Writes return/reward/prompt to meta/returns_sft.parquet in the dataset.
+
+data:
+  data_root: null
+  train_data_paths:
+    - dataset_path: /data/datasets/libero_10_no_noops_lerobot
+      type: sft
+
+  # All LIBERO demo episodes are successful -> sft return shaping
+  # (reward = -1 per step, terminal step = 0).
+  dataset_type: "sft"
+  gamma: 1.0
+  failure_reward: -300.0
+
+  tag: "sft"
+  num_workers: 32
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job:
+    chdir: false

@@ -1,0 +1,22 @@
+# RECAP returns for the GR00T rollout dataset (contains failures).
+# Failure episodes get failure_reward at the terminal step -> negative returns.
+
+data:
+  data_root: null
+  train_data_paths:
+    - dataset_path: /data/datasets/libero_10_gr00t_rollouts
+      type: rollout
+
+  dataset_type: "rollout"
+  gamma: 1.0
+  failure_reward: -300.0
+
+  tag: "rollout"
+  num_workers: 16
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job:
+    chdir: false
