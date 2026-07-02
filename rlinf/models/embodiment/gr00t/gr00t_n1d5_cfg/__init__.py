@@ -98,13 +98,15 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     # arrives as garbage — sometimes finite, sometimes NaN / ~3.4e38. That NaN
     # then poisons ``pred`` -> loss -> grad on the very first step (lr=0). Re-init
     # it deterministically after load so CFG training starts from a clean token.
+    # Zero-init (adaLN-zero): conditioning starts as an exact no-op so the
+    # unconditional pass equals the loaded SFT policy at step 0.
     import torch.nn as nn
 
     adv_emb = model.action_head.advantage_embedding.embedding
     if adv_emb.weight.is_meta:
         adv_emb.to_empty(device="cpu")
     with torch.no_grad():
-        nn.init.normal_(adv_emb.weight, mean=0.0, std=0.02)
+        nn.init.zeros_(adv_emb.weight)
     if not torch.isfinite(adv_emb.weight).all():
         raise RuntimeError("advantage_embedding re-init produced non-finite values")
 

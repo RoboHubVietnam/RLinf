@@ -21,6 +21,13 @@ from omegaconf import DictConfig
 def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     model_type = str(cfg.get("model_type", "gr00t"))
 
+    if model_type == "gr00t_n1d7_cfg":
+        from rlinf.models.embodiment.gr00t.gr00t_n1d7_cfg import (
+            get_model as get_model_n1d7_cfg,
+        )
+
+        return get_model_n1d7_cfg(cfg, torch_dtype)
+
     if model_type == "gr00t_n1d7":
         from rlinf.models.embodiment.gr00t.gr00t_n1d7 import get_model as get_model_n1d7
 
@@ -46,7 +53,7 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     raise ValueError(
         f"Unsupported GR00T model_type: {model_type!r}. "
         f"Supported values: ['gr00t', 'gr00t_n1d5', 'gr00t_n1d6', 'gr00t_n1d7', "
-        f"'gr00t_cfg']."
+        f"'gr00t_cfg', 'gr00t_n1d7_cfg']."
     )
 
 

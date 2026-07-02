@@ -132,6 +132,17 @@ class FSDPCfgWorker(FSDPSftWorker):
 
             return build_gr00t_cfg_dataloader(self.cfg, self._world_size, self._rank)
 
+        # GR00T N1.7 CFG path: N1.7 has its own (Cosmos/Qwen3-VL) data pipeline,
+        # distinct from N1.5's eagle collator. Branch before OpenPI imports too.
+        if str(self.cfg.actor.model.get("model_type", "")) == "gr00t_n1d7_cfg":
+            from rlinf.data.datasets.recap.gr00t_n1d7_cfg import (
+                build_gr00t_n1d7_cfg_dataloader,
+            )
+
+            return build_gr00t_n1d7_cfg_dataloader(
+                self.cfg, self._world_size, self._rank
+            )
+
         import lerobot.common.datasets.lerobot_dataset as lerobot_dataset
         import openpi.training.data_loader as openpi_data_loader
         import openpi.transforms as transforms

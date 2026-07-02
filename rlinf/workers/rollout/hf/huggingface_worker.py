@@ -293,6 +293,8 @@ class MultiStepRolloutWorker(Worker):
             SupportedModel.DREAMZERO,
             SupportedModel.CNN_POLICY,
             SupportedModel.CFG_MODEL,
+            SupportedModel.GR00T_CFG,
+            SupportedModel.GR00T_N1D7_CFG,
         ]:
             loss_type = self.algorithm_cfg.get("loss_type", "actor")
             if loss_type == "embodied_dagger":

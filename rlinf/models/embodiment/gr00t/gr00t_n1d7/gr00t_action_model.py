@@ -45,6 +45,43 @@ from rlinf.utils.logging import get_logger
 logger = get_logger()
 
 
+def _patch_self_attention_transformer_mask() -> None:
+    """Make gr00t's ``SelfAttentionTransformer`` honor an optional attention mask.
+
+    The action head refines the VL tokens through ``vl_self_attention`` (a
+    ``SelfAttentionTransformer``) BEFORE the cross-attention DiT. Upstream's
+    ``forward`` takes no mask, so when the prompt is right-padded to
+    ``padding_value`` the bidirectional self-attention lets real tokens attend to
+    the padding and corrupts the action (verified: padded action.x 0.125 -> 0.021,
+    mean|Δ| 0.037 vs 0.0004 unpadded). The per-block ``BasicTransformerBlock`` and
+    its diffusers ``Attention`` already accept ``attention_mask`` (it is exactly how
+    ``AlternateVLDiT`` masks the cross-attention); only this wrapper dropped it.
+
+    We thread ``attention_mask`` through to each block. Backward compatible: with
+    ``attention_mask=None`` the behaviour is identical to upstream. Idempotent.
+    """
+    from gr00t.model.modules.dit import SelfAttentionTransformer
+
+    if getattr(SelfAttentionTransformer.forward, "_rlinf_mask_patched", False):
+        return
+
+    def forward(self, hidden_states, attention_mask=None, return_all_hidden_states=False):
+        hidden_states = hidden_states.contiguous()
+        all_hidden_states = [hidden_states]
+        for block in self.transformer_blocks:
+            hidden_states = block(hidden_states, attention_mask=attention_mask)
+            all_hidden_states.append(hidden_states)
+        if return_all_hidden_states:
+            return hidden_states, all_hidden_states
+        return hidden_states
+
+    forward._rlinf_mask_patched = True
+    SelfAttentionTransformer.forward = forward
+
+
+_patch_self_attention_transformer_mask()
+
+
 @contextmanager
 def redirect_qwen3_backbone_to_local(canonical_name: str, local_path: str | None):
     if local_path is None:
@@ -346,6 +383,12 @@ class FlowMatchingActionHeadForRLActionPrediction(Gr00tN1d7ActionHead):
         """Return a named submodule of the head, or ``None`` if absent."""
         return getattr(self, name, None)
 
+    def process_backbone_output(self, backbone_output: BatchFeature) -> BatchFeature:
+        """Override the upstream entry point (used by the inherited eval ``get_action``
+        path) so it runs the masked variant — otherwise eval would use upstream's
+        UNMASKED ``vl_self_attention`` and diverge from the RL forward."""
+        return self._process_backbone_output(backbone_output)
+
     def _process_backbone_output(self, backbone_output: BatchFeature) -> BatchFeature:
         """Apply the optional VL layer-norm and self-attention refinements."""
         if not hasattr(backbone_output, "backbone_features"):
@@ -358,7 +401,15 @@ class FlowMatchingActionHeadForRLActionPrediction(Gr00tN1d7ActionHead):
 
         vl_self_attention = self._get_component("vl_self_attention")
         if vl_self_attention is not None:
-            backbone_features = vl_self_attention(backbone_features)
+            # Mask padded VL tokens in this bidirectional self-attention so that
+            # right-padding the prompt to padding_value cannot leak padding into the
+            # real tokens. The cross-attention DiT (AlternateVLDiT) already masks via
+            # backbone_attention_mask; this closes the one stage that dropped it.
+            # Pass the same [B, seq] key-mask format AlternateVLDiT feeds the block
+            # (SelfAttentionTransformer.forward is patched to accept it). With no mask
+            # available this is a no-op (== upstream).
+            vl_attn_mask = getattr(backbone_output, "backbone_attention_mask", None)
+            backbone_features = vl_self_attention(backbone_features, attention_mask=vl_attn_mask)
 
         backbone_output.backbone_features = backbone_features
         return backbone_output

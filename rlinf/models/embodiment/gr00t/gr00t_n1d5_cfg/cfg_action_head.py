@@ -62,7 +62,10 @@ class AdvantageEmbedding(nn.Module):
     def __init__(self, embedding_dim: int):
         super().__init__()
         self.embedding = nn.Embedding(3, embedding_dim)
-        nn.init.normal_(self.embedding.weight, mean=0.0, std=0.02)
+        # adaLN-zero (DiT): zero-init so conditioning starts as an exact no-op
+        # (unconditional pass == base policy at step 0; POS/NEG directions are
+        # learned, not random). See gr00t_n1d7_cfg.cfg_action_head for details.
+        nn.init.zeros_(self.embedding.weight)
 
     def forward(self, labels: torch.Tensor) -> torch.Tensor:
         """labels: (B,) long in {NULL,NEG,POS} -> (B, 1, embedding_dim)."""

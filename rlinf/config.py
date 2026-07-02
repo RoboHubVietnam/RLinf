@@ -106,6 +106,7 @@ SupportedModel.QWEN3_VL_MOE_SFT = SupportedModel.register("qwen3_vl_moe", force=
 SupportedModel.GR00T_N1D6 = SupportedModel.register("gr00t_n1d6", force=True)
 SupportedModel.GR00T_N1D7 = SupportedModel.register("gr00t_n1d7", force=True)
 SupportedModel.GR00T_CFG = SupportedModel.register("gr00t_cfg", force=True)
+SupportedModel.GR00T_N1D7_CFG = SupportedModel.register("gr00t_n1d7_cfg", force=True)
 
 EMBODIED_MODEL = set(
     {
@@ -127,6 +128,7 @@ EMBODIED_MODEL = set(
         SupportedModel.GR00T_N1D6,
         SupportedModel.GR00T_N1D7,
         SupportedModel.GR00T_CFG,
+        SupportedModel.GR00T_N1D7_CFG,
         SupportedModel.CFG_MODEL,
         SupportedModel.VALUE_MODEL,
     }

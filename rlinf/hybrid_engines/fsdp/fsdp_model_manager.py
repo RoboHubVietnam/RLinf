@@ -490,6 +490,22 @@ class FSDPModelManager:
         adam_eps = self._cfg.optim.get("adam_eps", 1e-8)
         weight_decay = self._cfg.optim.get("weight_decay", 1e-2)
 
+        # Optional per-parameter LR overrides: optim.param_group_overrides is a
+        # list of {pattern: <substring of param name>, lr: <float>} entries.
+        # Params whose name contains ``pattern`` are placed in a dedicated
+        # param group with that lr (first matching entry wins). Use case:
+        # from-scratch parameters (e.g. a CFG advantage embedding) added to a
+        # pretrained model need a much larger lr than the fine-tune lr of the
+        # pretrained weights.
+        overrides = self._cfg.optim.get("param_group_overrides", None) or []
+        params_override: list[list[nn.Parameter]] = [[] for _ in overrides]
+
+        def match_override(name: str) -> int | None:
+            for i, ov in enumerate(overrides):
+                if ov["pattern"] in name:
+                    return i
+            return None
+
         params_actor = []
         params_critic = []
 
@@ -508,7 +524,10 @@ class FSDPModelManager:
                 if name in self.store_requires_grad_param_name:
                     param.requires_grad = True
                 if param.requires_grad:
-                    if "value_head" in name or "model.value_head" in name:
+                    ov_idx = match_override(name)
+                    if ov_idx is not None:
+                        params_override[ov_idx].append(param)
+                    elif "value_head" in name or "model.value_head" in name:
                         params_critic.append(param)
                     else:
                         params_actor.append(param)
@@ -530,6 +549,19 @@ class FSDPModelManager:
                     "betas": betas,
                 }
             )
+        for ov, ov_params in zip(overrides, params_override):
+            if len(ov_params) > 0:
+                self._logger.info(
+                    f"[FSDP] LR override: {len(ov_params)} param(s) matching "
+                    f"{ov['pattern']!r} -> lr={ov['lr']}"
+                )
+                param_groups.append(
+                    {
+                        "params": ov_params,
+                        "lr": float(ov["lr"]),
+                        "betas": betas,
+                    }
+                )
         optimizer = torch.optim.AdamW(
             param_groups,
             eps=adam_eps,
