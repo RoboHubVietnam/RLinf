@@ -1,0 +1,17 @@
+# Advantages over BOTH the round-1 rollouts and the expert SFT demos, with a
+# single global positive-quantile threshold (demos -> mostly positive anchors,
+# rollout failures -> negative). Inherits compute_advantages_n1d7.
+defaults:
+  - compute_advantages_n1d7
+  - _self_
+
+data:
+  train_data_paths:
+    - dataset_path: "/data/datasets/recap20k_iter1"
+      robot_type: "libero"
+      type: "rollout"
+      weight: 1.0
+    - dataset_path: "/data/datasets/libero_10_no_noops_lerobot"
+      robot_type: "libero"
+      type: "sft"
+      weight: 1.0

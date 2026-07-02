@@ -966,6 +966,7 @@ def save_advantages_to_dataset(
     rank: int = 0,
     world_size: int = 1,
     tag: str | None = None,
+    force_positive: bool = True,
 ):
     """Save advantages parquet directly into the source dataset's meta/ directory.
 
@@ -979,10 +980,15 @@ def save_advantages_to_dataset(
         dataset_path: Source LeRobot dataset path (writes into its meta/)
         advantages_df: DataFrame with advantage values
         threshold: Threshold for positive advantage
-        dataset_type: Dataset type ("sft" forces all-True advantage labels)
+        dataset_type: Dataset type (for logging; "sft" combined with
+            ``force_positive`` forces all-True advantage labels)
         rank: Current process rank
         world_size: Total number of processes
         tag: Optional tag for advantages parquet filename
+        force_positive: If True and dataset_type is "sft", label every step
+            positive (legacy behavior, matches RECAP's treatment of expert
+            *corrections*). If False, sft datasets are thresholded like any
+            other data (RECAP paper calibration: ~30% of demo steps positive).
     """
     if rank == 0:
         meta_dir = dataset_path / "meta"
@@ -991,16 +997,23 @@ def save_advantages_to_dataset(
         # Build advantages parquet with boolean advantage column
         save_df = advantages_df.copy()
         save_df.rename(columns={"advantage": "advantage_continuous"}, inplace=True)
-        if (dataset_type or "").lower() == "sft":
+        forced = force_positive and (dataset_type or "").lower() == "sft"
+        if forced:
             save_df["advantage"] = True
         else:
             save_df["advantage"] = save_df["advantage_continuous"] >= threshold
 
         adv_filename = f"advantages_{tag}.parquet" if tag else "advantages.parquet"
         save_df.to_parquet(meta_dir / adv_filename, index=False)
-        if (dataset_type or "").lower() == "sft":
+        if forced:
             logger.info(
                 f"  Dataset type is sft, forcing all advantage labels to True ({len(save_df)} entries)"
+            )
+        else:
+            pos = int(save_df["advantage"].sum())
+            logger.info(
+                f"  Thresholded at {threshold:.4f}: {pos}/{len(save_df)} "
+                f"({pos / max(len(save_df), 1) * 100:.1f}%) positive"
             )
         logger.info(f"  Saved {adv_filename} to {meta_dir} ({len(save_df)} entries)")
 
@@ -1177,6 +1190,34 @@ def main(cfg: DictConfig) -> None:
             np.percentile(combined_advantages, (1 - positive_quantile) * 100)
         )
 
+        # Optional per-dataset-type calibration (RECAP paper, arXiv:2511.14759:
+        # threshold eps_l is set so ~30% of demonstration steps and ~40% of
+        # autonomous-rollout steps are labelled positive). When set, each
+        # dataset type ("sft", "rollout", ...) gets its own threshold from the
+        # advantage distribution of that type only; the unified threshold is
+        # the fallback for types not listed. Requires sft_force_positive=false
+        # for the calibration to actually apply to demo (sft) datasets.
+        quantile_by_type = cfg.advantage.get("positive_quantile_by_type", None)
+        sft_force_positive = cfg.advantage.get("sft_force_positive", True)
+        thresholds_by_type: dict[str, float] = {}
+        if quantile_by_type is not None:
+            adv_by_type: dict[str, list[np.ndarray]] = {}
+            for i, (ds_path, result) in enumerate(dataset_results.items()):
+                ds_type = (result["config"].get("type") or "rollout").lower()
+                adv_by_type.setdefault(ds_type, []).append(all_advantages[i])
+            for ds_type, arrs in adv_by_type.items():
+                q = float(quantile_by_type.get(ds_type, positive_quantile))
+                type_combined = np.concatenate(arrs)
+                thresholds_by_type[ds_type] = float(
+                    np.percentile(type_combined, (1 - q) * 100)
+                )
+                if rank == 0:
+                    logger.info(
+                        f"  Per-type threshold [{ds_type}]: quantile={q} -> "
+                        f"threshold={thresholds_by_type[ds_type]:.4f} "
+                        f"({len(type_combined)} samples)"
+                    )
+
         if rank == 0:
             logger.info(f"\n{'=' * 60}")
             logger.info("Unified Advantage Threshold (across ALL datasets)")
@@ -1218,20 +1259,30 @@ def main(cfg: DictConfig) -> None:
             "unified_threshold": unified_threshold,
             "positive_quantile": positive_quantile,
         }
+        if thresholds_by_type:
+            tag_stats["thresholds_by_type"] = thresholds_by_type
+            tag_stats["positive_quantile_by_type"] = (
+                OmegaConf.to_container(quantile_by_type)
+                if isinstance(quantile_by_type, DictConfig)
+                else dict(quantile_by_type)
+            )
+            tag_stats["sft_force_positive"] = bool(sft_force_positive)
 
         import yaml
 
         for ds_path, result in dataset_results.items():
             df = result["df"]
             dataset_type = result["config"].get("type")
+            ds_type_key = (dataset_type or "rollout").lower()
             save_advantages_to_dataset(
                 dataset_path=ds_path,
                 advantages_df=df,
-                threshold=unified_threshold,
+                threshold=thresholds_by_type.get(ds_type_key, unified_threshold),
                 dataset_type=dataset_type,
                 rank=rank,
                 world_size=world_size,
                 tag=tag,
+                force_positive=sft_force_positive,
             )
 
             if rank == 0:

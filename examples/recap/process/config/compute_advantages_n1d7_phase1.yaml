@@ -1,0 +1,39 @@
+# Phase 1 recalibration — paper-faithful advantage labels over the AGGREGATED
+# pool (iter1 + iter2 rollouts + expert demos) with per-type positive quantiles
+# (RECAP paper, arXiv:2511.14759: ~40% of rollout steps and ~30% of demo steps
+# positive) instead of the legacy force-all-demos-positive labeling.
+#
+# Uses the latest (iter2) value critic for all three datasets and writes
+# meta/advantages_recal.parquet into each (existing advantages_rollout.parquet
+# files are left untouched).
+defaults:
+  - compute_advantages_n1d7
+  - _self_
+
+advantage:
+  value_checkpoint: /data/checkpoints/recap20k_iter2_value/value_iter2/checkpoints/global_step_1500
+  tag: "recal"
+  returns_tag: "rollout"
+  # CUDA-fork deadlock avoidance on single-GPU torchrun
+  num_dataloader_workers_per_gpu: 0
+
+  # Paper calibration: threshold demos like everything else (no force-True).
+  sft_force_positive: false
+  positive_quantile_by_type:
+    rollout: 0.4
+    sft: 0.3
+
+data:
+  train_data_paths:
+    - dataset_path: "/data/datasets/recap20k_iter1"
+      robot_type: "libero"
+      type: "rollout"
+      weight: 1.0
+    - dataset_path: "/data/datasets/recap20k_iter2"
+      robot_type: "libero"
+      type: "rollout"
+      weight: 1.0
+    - dataset_path: "/data/datasets/libero_10_no_noops_lerobot"
+      robot_type: "libero"
+      type: "sft"
+      weight: 1.0

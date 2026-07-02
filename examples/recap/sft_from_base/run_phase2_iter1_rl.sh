@@ -1,0 +1,194 @@
+#!/usr/bin/env bash
+# RECAP Phase 2, RL iteration 1 — the first true RECAP loop on a WORKING
+# conditioned policy.
+#
+# Phase 2 conditioned-SFT (demos-only, joint lr=1e-4) delivered the first real
+# gains: base 44 -> w=1.0 63 / w=1.5 55 / w=2.0 71 (100 ep each). This driver
+# closes the RL loop per the paper (arXiv:2511.14759):
+#   collect with the conditioned policy -> label with a fresh value critic ->
+#   retrain the conditioned policy FROM THE PRETRAINED CKPT on aggregated
+#   (rollouts + demos) data -> eval.
+# Retraining anchors on the HF SFT ckpt (paper: "finetuned from the
+# pre-trained checkpoint, rather than from the last iteration"); the
+# conditioning re-learns in 5000 joint steps (proven by Phase 2).
+#
+# Stages (resumable):
+#   0. sweep    : extend guidance sweep w=2.5/3.0 on the phase2 ckpt; pick BEST_W
+#   1. collect  : 2 seeds x 100 eps from phase2 ckpt at BEST_W
+#   2. convert  : pkl -> LeRobot v2.1
+#   3. returns  : Monte-Carlo returns -> RMIN
+#   4. value    : train value_p2iter1 critic (1500 steps)
+#   5. advantages: per-type quantiles (rollout 0.4 / sft 0.3), tag=recalp2
+#   6. cfg      : conditioned-SFT retrain from SFT base on rollouts+demos (5000 steps)
+#   7. confirm  : 100-ep eval at w=1.0/1.5/2.0/2.5
+set -o pipefail
+REPO=/home/duynguyen/Desktop/RESEARCH/VR/RLinf
+cd "$REPO"
+N1D7_ACT="$REPO/vla-rlft-n1d7/bin/activate"
+OPENPI_ACT="$REPO/vla-rlft-openpi/bin/activate"
+
+SFT_CKPT=/data/checkpoints/n1d7_sft_from_base_20k/n1d7_sft_from_base_20k/checkpoint-20000
+P2CKPT="$REPO/examples/recap/results/recap20k_phase2_condsft/checkpoints/global_step_5000/actor/model_state_dict/full_weights.pt"
+DEMOS=/data/datasets/libero_10_no_noops_lerobot
+PKL=/data/datasets/recap20k_p2iter1_pkl
+REPOID=recap20k_p2iter1
+DS=/data/datasets/$REPOID
+VALDIR=/data/checkpoints/recap20k_p2iter1_value
+CFGEXP=recap20k_phase2_iter1
+CFGOUT="$REPO/examples/recap/results/${CFGEXP}/checkpoints"
+NEWCK="$CFGOUT/global_step_5000/actor/model_state_dict/full_weights.pt"
+COLLECT_SEEDS="0 1"
+STATUS=/tmp/recap20k_p2iter1_status.log
+
+common_env() {
+  export REPO_PATH="$REPO" EMBODIED_PATH="$REPO/examples/embodiment" PYTHONPATH="$REPO:${PYTHONPATH:-}"
+  export HF_LEROBOT_HOME=/data/datasets HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+  export TOKENIZERS_PARALLELISM=false HYDRA_FULL_ERROR=1 MUJOCO_GL=osmesa PYOPENGL_PLATFORM=osmesa
+  export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+}
+mark(){ echo "=== $(date +%H:%M:%S) | $* ===" | tee -a "$STATUS"; }
+
+echo "RUN_P2ITER1_START $(date)" > "$STATUS"
+
+# ---- 0. Extended guidance sweep on the phase2 ckpt, then pick BEST_W ----
+( source "$N1D7_ACT"; common_env
+  for W in 2.5 3.0; do
+    LOG="/tmp/n17_phase2_confirm_w${W}.log"
+    if grep -qE "libero eval\] task_id=" "$LOG" 2>/dev/null; then
+      mark "STAGE 0 sweep w=$W SKIP (log exists)"; continue
+    fi
+    bash "$REPO/evaluations/run_eval.sh" libero libero_10_gr00t_n1d7_cfg_eval \
+      "+runner.ckpt_path=${P2CKPT}" "rollout.model.cfg_guidance_weight=${W}" \
+      "+rollout.model.conditioning=film" "env.eval.max_steps_per_rollout_epoch=2560" \
+      "runner.logger.experiment_name=phase2_condsft_w${W}" \
+      "runner.logger.logger_backends=[wandb,tensorboard]" \
+      "runner.logger.project_name=recap-n1d7-from-base" 2>&1 | tee "$LOG" | tail -2
+    s=$(grep -cE "task_id=.*success=True" "$LOG"); t=$(grep -cE "libero eval\] task_id=" "$LOG")
+    mark "PHASE2 CONFIRM w=$W -> ${s}/${t}"
+  done )
+BEST_W=2.0; BEST_S=0
+for W in 1.0 1.5 2.0 2.5 3.0; do
+  LOG="/tmp/n17_phase2_confirm_w${W}.log"
+  [ -f "$LOG" ] || continue
+  s=$(grep -cE "task_id=.*success=True" "$LOG")
+  if [ "$s" -gt "$BEST_S" ]; then BEST_S=$s; BEST_W=$W; fi
+done
+mark "STAGE 0 done: BEST_W=$BEST_W ($BEST_S/100)"
+
+# ---- 1. COLLECT from the conditioned policy at BEST_W ----
+NP=$(find "$PKL" -name '*.pkl' 2>/dev/null | wc -l)
+if [ "$NP" -ge 100 ]; then
+  mark "STAGE 1 collect SKIP (found $NP pkls)"
+else
+  mark "STAGE 1 collect: phase2 cond-SFT policy (film, w=$BEST_W)"
+  ( source "$N1D7_ACT"; common_env
+    for S in $COLLECT_SEEDS; do
+      bash "$REPO/evaluations/run_eval.sh" libero libero_10_gr00t_n1d7_cfg_eval \
+        "+runner.ckpt_path=$P2CKPT" \
+        "+rollout.model.conditioning=film" \
+        "rollout.model.cfg_guidance_weight=$BEST_W" \
+        "env.eval.use_ordered_reset_state_ids=false" \
+        "env.eval.seed=$S" \
+        "env.eval.total_num_envs=20" \
+        "env.eval.max_steps_per_rollout_epoch=2560" \
+        "+env.eval.data_collection.enabled=true" \
+        "+env.eval.data_collection.save_dir=$PKL/run_$S" \
+        "+env.eval.data_collection.export_format=pickle" \
+        "+env.eval.data_collection.robot_type=libero" \
+        "+env.eval.data_collection.only_success=false" \
+        "+env.eval.data_collection.fps=20" \
+        "+env.eval.data_collection.finalize_interval=50" \
+        "runner.logger.log_path=$PKL/_logs/run_$S" 2>&1 | tail -2
+    done )
+  NP=$(find "$PKL" -name '*.pkl' 2>/dev/null | wc -l)
+  NS=$(find "$PKL" -name '*success*.pkl' 2>/dev/null | wc -l)
+  mark "STAGE 1 collect done: $NP episodes ($NS success)"
+fi
+if [ "$NP" -lt 20 ]; then mark "ABORT: too few rollouts ($NP)"; exit 1; fi
+
+# ---- 2. CONVERT pkl -> LeRobot v2.1 ----
+if [ -f "$DS/meta/episodes.jsonl" ]; then
+  mark "STAGE 2 convert SKIP (dataset exists)"
+else
+  mark "STAGE 2 convert -> LeRobot v2.1"
+  ( source "$OPENPI_ACT"; common_env
+    python "$REPO/examples/recap/process/convert_rollouts_to_lerobot.py" \
+      --pkl_dir "$PKL" --repo_id "$REPOID" --sft_modality "$DEMOS/meta/modality.json" 2>&1 | tail -2 )
+  if [ ! -f "$DS/meta/episodes.jsonl" ]; then mark "ABORT: convert produced no dataset"; exit 1; fi
+fi
+
+# ---- 3. RETURNS -> RMIN ----
+mark "STAGE 3 compute_returns"
+( source "$OPENPI_ACT"; common_env; cd "$REPO/examples/recap/process"
+  python compute_returns.py --config-name compute_returns_rollout \
+    "data.train_data_paths.0.dataset_path=$DS" data.tag=rollout 2>&1 | tee /tmp/recap20k_p2iter1_returns.log | tail -2 )
+RMIN=$(grep -oE "return: min=-?[0-9.]+" /tmp/recap20k_p2iter1_returns.log | tail -1 | grep -oE -- "-?[0-9.]+")
+RMIN=${RMIN:--811.0}
+mark "STAGE 3 returns done: return_min=$RMIN"
+
+# ---- 4. VALUE critic on the new rollouts ----
+VALCK=$(ls -d "$VALDIR"/value_p2iter1/checkpoints/global_step_* 2>/dev/null | sort -t_ -k3 -n | tail -1)
+if [ -n "$VALCK" ] && [ -f "$VALCK/actor/model_state_dict/full_weights.pt" ]; then
+  mark "STAGE 4 value SKIP (found $VALCK)"
+else
+  mark "STAGE 4 train value critic (max_steps=1500)"
+  ( source "$OPENPI_ACT"; common_env; cd "$REPO/examples/recap/value"
+    python train_value.py --config-path config --config-name libero_sft_value_gr00t_n1d7 \
+      "data.train_data_paths.0.dataset_path=$DS" data.tag=rollout \
+      "data.return_min=$RMIN" "data.return_max=0.0" \
+      "runner.logger.log_path=$VALDIR" "runner.logger.experiment_name=value_p2iter1" \
+      "runner.max_steps=1500" "runner.save_interval=1500" \
+      "actor.optim.total_training_steps=1500" 2>&1 | tail -3 )
+  VALCK=$(ls -d "$VALDIR"/value_p2iter1/checkpoints/global_step_* 2>/dev/null | sort -t_ -k3 -n | tail -1)
+fi
+if [ -z "$VALCK" ]; then mark "ABORT: value checkpoint missing"; exit 1; fi
+mark "STAGE 4 value ckpt: $VALCK"
+
+# ---- 5. ADVANTAGES (per-type quantiles, tag=recalp2) ----
+if [ -f "$DS/meta/advantages_recalp2.parquet" ] && [ -f "$DEMOS/meta/advantages_recalp2.parquet" ]; then
+  mark "STAGE 5 advantages SKIP (recalp2 exists)"
+else
+  mark "STAGE 5 advantages: p2iter1 rollouts + demos (rollout 0.4 / sft 0.3)"
+  ( source "$OPENPI_ACT"; common_env; cd "$REPO/examples/recap/process"
+    torchrun --nproc_per_node=1 compute_advantages.py --config-name compute_advantages_n1d7_phase2 \
+      "advantage.value_checkpoint=$VALCK" \
+      "data.return_min=$RMIN" "data.return_max=0.0" 2>&1 | tail -12 )
+  if [ ! -f "$DS/meta/advantages_recalp2.parquet" ]; then mark "ABORT: advantages missing"; exit 1; fi
+fi
+mark "STAGE 5 advantages done"
+
+# ---- 6. Conditioned-SFT retrain from SFT base on rollouts + demos ----
+if [ -f "$NEWCK" ]; then
+  mark "STAGE 6 CFG SKIP (ckpt exists)"
+else
+  mark "STAGE 6 cond-SFT retrain (film, joint lr=1e-4, 5000 steps) on p2iter1+demos"
+  ( source "$N1D7_ACT"; common_env; cd "$REPO/examples/recap/cfg"
+    python train_cfg.py --config-name libero_cfg_gr00t_n1d7 \
+      "actor.model.model_path=$SFT_CKPT" \
+      "data.train_data_paths=[{dataset_path:$DS,type:rollout,weight:1.0},{dataset_path:$DEMOS,type:sft,weight:1.0}]" \
+      data.advantage_tag=recalp2 \
+      "runner.logger.experiment_name=$CFGEXP" \
+      "runner.logger.project_name=recap-n1d7-from-base" \
+      "runner.max_steps=5000" "runner.save_interval=1000" \
+      "actor.optim.lr=1.0e-4" \
+      "actor.optim.total_training_steps=5000" "actor.optim.lr_warmup_steps=200" 2>&1 | tail -4 )
+  if [ ! -f "$NEWCK" ]; then mark "ABORT: CFG ckpt missing ($NEWCK)"; exit 1; fi
+fi
+mark "STAGE 6 CFG done: $NEWCK"
+
+# ---- 7. 100-ep confirm at w=1.0/1.5/2.0/2.5 ----
+mark "STAGE 7 100-ep confirm (w=1.0/1.5/2.0/2.5)"
+( source "$N1D7_ACT"; common_env
+  for W in 1.0 1.5 2.0 2.5; do
+    LOG="/tmp/n17_p2iter1_confirm_w${W}.log"
+    bash "$REPO/evaluations/run_eval.sh" libero libero_10_gr00t_n1d7_cfg_eval \
+      "+runner.ckpt_path=${NEWCK}" "rollout.model.cfg_guidance_weight=${W}" \
+      "+rollout.model.conditioning=film" "env.eval.max_steps_per_rollout_epoch=2560" \
+      "runner.logger.experiment_name=p2iter1_confirm_w${W}" \
+      "runner.logger.logger_backends=[wandb,tensorboard]" \
+      "runner.logger.project_name=recap-n1d7-from-base" 2>&1 | tee "$LOG" | tail -2
+    s=$(grep -cE "task_id=.*success=True" "$LOG"); t=$(grep -cE "libero eval\] task_id=" "$LOG")
+    mark "P2ITER1 CONFIRM w=$W -> ${s}/${t}"
+  done )
+mark "RUN_P2ITER1 COMPLETE (phase2 cond-SFT: w1.0/1.5/2.0=63/55/71; base=44)"
+echo "RUN_P2ITER1_EXIT=0" | tee -a "$STATUS"

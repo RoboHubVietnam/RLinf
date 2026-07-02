@@ -1,0 +1,76 @@
+defaults:
+  - env/libero_10@env.eval
+  - model/gr00t_n1d7@rollout.model
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout: all
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "sft_n1d7_masked_rebaseline"
+    logger_backends: ["tensorboard", "wandb"]
+
+  max_epochs: 1000
+  max_steps: -1
+
+  only_eval: True
+  val_check_interval: -1
+  save_interval: -1
+
+  resume_dir: null
+  ckpt_path: null
+
+env:
+  group_name: "EnvGroup"
+
+  eval:
+    rollout_epoch: 1
+    # 10 LIBERO-Long tasks x 10 trials = 100 episodes. The eval reset pool is
+    # interleaved trial-major: [task0_tr0..task9_tr0, task0_tr1..task9_tr1, ...].
+    # With a single env worker (total_num_processes=1) holding the full pool and
+    # 20 parallel envs, auto_reset cycles 20 states at a time; allowing 5 cycles
+    # (5 * 512 = 2560 steps) walks interleaved[0..99] = trials 0-9 of each task,
+    # i.e. exactly 10 runs per task. 20 envs keeps host RAM ~40GB (100 OOM'd 92GB).
+    total_num_envs: 20
+    auto_reset: True
+    ignore_terminations: True
+    max_episode_steps: 512
+    max_steps_per_rollout_epoch: 2560
+    group_size: 1
+    use_fixed_reset_state_ids: True
+    use_ordered_reset_state_ids: True
+    is_eval: True
+    video_cfg:
+      save_video: True
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  group_name: "RolloutGroup"
+  generation_backend: "huggingface"
+  recompute_logprobs: False
+  enable_offload: False
+  pipeline_stage_num: 1
+
+  model:
+    model_type: "gr00t_n1d7"
+    model_path: /data/checkpoints/GR00T-N1.7-LIBERO/libero_10
+    backbone_model_path: /data/checkpoints/Cosmos-Reason2-2B
+    embodiment_tag: "libero_sim"
+    num_action_chunks: 16
+    denoising_steps: 4
+    add_value_head: False
+    rl_head_config:
+      add_value_head: False

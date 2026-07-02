@@ -24,3 +24,4 @@ PKG-INFO
 
 # RECAP local run artifacts
 wandb/
+examples/recap/results/

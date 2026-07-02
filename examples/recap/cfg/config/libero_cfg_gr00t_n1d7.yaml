@@ -1,0 +1,135 @@
+# RECAP stage 4 — CFG (advantage-conditioned) training for GR00T N1.7 on LIBERO-Long.
+#
+# Usage:
+#   cd examples/recap/cfg
+#   python train_cfg.py --config-name libero_cfg_gr00t_n1d7
+#
+# Prereqs:
+#   - LeRobot rollout dataset at data.train_data_paths[*].dataset_path (RECAP #1-2)
+#   - meta/advantages_{data.advantage_tag}.parquet in that dataset (RECAP #6)
+#   - vla-rlft-n1d7 venv (Cosmos-Reason2-2B backbone)
+
+defaults:
+  - training_backend/fsdp@actor.fsdp_config
+  - _self_
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/sft/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "cfg_sft_gr00t_n1d7_libero10"
+    logger_backends: ["tensorboard", "wandb"]
+
+  max_epochs: 30000
+  max_steps: -1
+  val_check_interval: -1
+  save_interval: 1000
+
+data:
+  num_workers: 8
+  advantage_tag: "rollout"
+  video_backend: "torchcodec"   # LIBERO videos are AV1; only torchcodec decodes them
+  balance_dataset_weights: true
+  seed: 42
+
+  train_data_paths:
+    - dataset_path: "/data/datasets/n1d7_libero_rollouts"
+      type: "sft"
+      weight: 1.0
+
+algorithm:
+  adv_type: gae
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 2
+  global_batch_size: 32
+  seed: 0
+
+  model:
+    precision: bf16
+    is_lora: false
+    load_to_device: true
+    model_path: "/data/checkpoints/GR00T-N1.7-LIBERO/libero_10"
+    backbone_model_path: "/data/checkpoints/Cosmos-Reason2-2B"
+    model_type: "gr00t_n1d7_cfg"
+    embodiment_tag: "libero_sim"
+    num_action_chunks: 16
+    obs_converter_type: "libero"
+    denoising_steps: 4
+    # CFG / RECAP knobs
+    advantage_cfg_dropout_prob: 0.3
+    cfg_guidance_weight: 1.0
+    positive_only_conditional: false
+    # Conditioning injection site: "film" (advantage -> DiT temb/adaLN) or
+    # "token" (append advantage token to cross-attention context). Ablation.
+    conditioning: "film"
+    # N1.7 action-head config (Cosmos backbone frozen; only action head +
+    # advantage embedding train). add_value_head False: CFG uses parquet
+    # advantages, not a runtime value head.
+    add_value_head: False
+    # Full rl_head_config (the parent RL action head built in __init__ reads all
+    # of these before the CFG head replaces it). Mirrors model/gr00t_n1d7.yaml.
+    rl_head_config:
+      joint_logprob: False
+      noise_method: "flow_sde"
+      ignore_last: False
+      safe_get_logprob: False
+      noise_anneal: False
+      noise_params: [0.7, 0.3, 400]
+      noise_level: 0.5
+      action_noise_scale: 0.1
+      add_value_head: False
+      chunk_critic_input: False
+      detach_critic_input: True
+      disable_dropout: True
+      use_vlm_value: False
+      value_vlm_mode: "mean_token"
+      padding_value: 570
+
+  optim:
+    # Conservative LR: on N1.5, RECAP CFG at lr=1e-5 DEGRADED the policy; lr~2e-6
+    # preserved it. Start low for N1.7 and raise only if loss/SR warrant.
+    lr: 2.0e-6
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    weight_decay: 1.0e-10
+    clip_grad: 1.0
+    lr_scheduler: "cosine"
+    lr_warmup_steps: 500
+    total_training_steps: 5000
+    min_lr: 0.0
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    # Frozen Cosmos backbone + trainable action head: use_orig_params=False trips
+    # FSDP's flat-param view-inplace guard (same as N1.5).
+    use_orig_params: True
+    gradient_checkpointing: False
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: fp32   # bf16 grad reduction produced NaN grad norms on N1.5
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False

@@ -1,0 +1,18 @@
+# RECAP CFG training on a MIX of rollouts + expert SFT demos.
+# Mixing expert trajectories (guaranteed positive-advantage anchors) with the
+# policy's own rollouts counters CFG forgetting on a fragile under-trained base:
+# the demos keep the policy tied to competent behavior while the advantage
+# conditioning still learns from the rollout success/failure contrast.
+# Inherits everything from the base CFG config; only swaps train_data_paths.
+defaults:
+  - libero_cfg_gr00t_n1d7
+  - _self_
+
+data:
+  train_data_paths:
+    - dataset_path: "/data/datasets/recap20k_iter1"          # round-1 rollouts (mixed success/fail)
+      type: "rollout"
+      weight: 1.0
+    - dataset_path: "/data/datasets/libero_10_no_noops_lerobot"  # expert SFT demos (positive anchors)
+      type: "sft"
+      weight: 1.0

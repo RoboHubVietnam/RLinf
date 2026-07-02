@@ -1,0 +1,77 @@
+defaults:
+  - env/libero_10@env.eval
+  - model/gr00t_n1d7@rollout.model
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout: all
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "libero_10_gr00t_n1d7_cfg_eval"
+    logger_backends: ["tensorboard", "wandb"]
+
+  max_epochs: 1000
+  max_steps: -1
+
+  only_eval: True
+  val_check_interval: -1
+  save_interval: -1
+
+  resume_dir: null
+  # Optional path to a trained CFG full_weights.pt; null => no-checkpoint control
+  # (SFT weights + freshly-initialized advantage embedding), which should
+  # reproduce the SFT success rate and prove the CFG inference path is correct.
+  ckpt_path: null
+
+env:
+  group_name: "EnvGroup"
+
+  eval:
+    rollout_epoch: 1
+    # Same 10-runs/task protocol as the SFT eval (see libero_10_gr00t_n1d7_sft_eval.yaml).
+    total_num_envs: 20
+    auto_reset: True
+    ignore_terminations: True
+    max_episode_steps: 512
+    max_steps_per_rollout_epoch: 2560
+    group_size: 1
+    use_fixed_reset_state_ids: True
+    use_ordered_reset_state_ids: True
+    is_eval: True
+    video_cfg:
+      save_video: True
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  group_name: "RolloutGroup"
+  generation_backend: "huggingface"
+  recompute_logprobs: False
+  enable_offload: False
+  pipeline_stage_num: 1
+
+  model:
+    model_type: "gr00t_n1d7_cfg"
+    model_path: /data/checkpoints/GR00T-N1.7-LIBERO/libero_10
+    backbone_model_path: /data/checkpoints/Cosmos-Reason2-2B
+    embodiment_tag: "libero_sim"
+    num_action_chunks: 16
+    denoising_steps: 4
+    add_value_head: False
+    cfg_guidance_weight: 1.0
+    advantage_cfg_dropout_prob: 0.3
+    positive_only_conditional: False
+    rl_head_config:
+      add_value_head: False

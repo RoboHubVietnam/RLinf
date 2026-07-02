@@ -1,0 +1,29 @@
+# Phase 2 RL-iteration advantages — rollouts collected by the conditioned-SFT
+# policy (recap20k_p2iter1) + expert demos, per-type paper quantiles (~40%
+# rollout / ~30% demo steps positive), fresh value critic. Writes
+# meta/advantages_recalp2.parquet (leaves earlier tags untouched).
+defaults:
+  - compute_advantages_n1d7
+  - _self_
+
+advantage:
+  value_checkpoint: /data/checkpoints/recap20k_p2iter1_value/value_p2iter1/checkpoints/global_step_1500
+  tag: "recalp2"
+  returns_tag: "rollout"
+  num_dataloader_workers_per_gpu: 0
+
+  sft_force_positive: false
+  positive_quantile_by_type:
+    rollout: 0.4
+    sft: 0.3
+
+data:
+  train_data_paths:
+    - dataset_path: "/data/datasets/recap20k_p2iter1"
+      robot_type: "libero"
+      type: "rollout"
+      weight: 1.0
+    - dataset_path: "/data/datasets/libero_10_no_noops_lerobot"
+      robot_type: "libero"
+      type: "sft"
+      weight: 1.0
