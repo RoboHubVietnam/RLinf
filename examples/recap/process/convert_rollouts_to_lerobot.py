@@ -44,6 +44,20 @@ def main():
     ap.add_argument("--repo_id", default="libero_10_gr00t_rollouts")
     ap.add_argument("--fps", type=int, default=20)
     ap.add_argument("--sft_modality", default=None)
+    ap.add_argument(
+        "--gripper_from_env",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Recorded rollout actions are the ENV-executed actions, i.e. after "
+            "prepare_actions_for_libero flipped the gripper to [-1,1] "
+            "(g_env = -sign(2*g_raw - 1)). Map the gripper back to the raw "
+            "model/demo convention g_raw = (1 - g_env)/2 in {0,1} so rollout "
+            "and demo datasets share one action convention. Training on the "
+            "unmapped env convention mixes two opposite gripper conventions "
+            "and produces a policy that never grasps (0% SR)."
+        ),
+    )
     args = ap.parse_args()
 
     # recursive so it also picks up per-pass subdirs (run_0/, run_1/, ...)
@@ -71,12 +85,16 @@ def main():
         n_frames = len(actions)  # obs has one more (terminal); align to actions
         episode = []
         for i in range(n_frames):
+            act = np.asarray(actions[i], dtype=np.float32)
+            if args.gripper_from_env:
+                act = act.copy()
+                act[..., -1] = (1.0 - act[..., -1]) / 2.0
             episode.append(
                 {
                     "observation.images.image": np.asarray(obs[i]["main_images"]),
                     "observation.images.wrist_image": np.asarray(obs[i]["wrist_images"]),
                     "observation.state": np.asarray(obs[i]["states"], dtype=np.float32),
-                    "action": np.asarray(actions[i], dtype=np.float32),
+                    "action": act,
                     "is_success": np.asarray([success], dtype=bool),
                     "task": task,
                 }

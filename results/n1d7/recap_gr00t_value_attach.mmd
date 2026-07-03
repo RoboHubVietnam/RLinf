@@ -1,0 +1,33 @@
+flowchart TB
+    subgraph OFFLINE["OFFLINE value pipeline — separate model, never attached to GR00T"]
+        RO["Rollout / demo datasets<br/>(LeRobot, w=1.0 collection)"] --> VC
+        VC["ValueCriticModel<br/>SigLIP2-so400m (vision) + Gemma3-270m (expert)<br/>distributional value, 201 return bins"] --> ADV
+        ADV["compute_advantages.py<br/>A = r_(t:t+N) + γᴺ·V(o_t+N) − V(o_t)<br/>per-type quantile threshold:<br/>rollouts top 40% / demos top 30% → positive"] --> PQ
+        PQ["meta/advantages_(tag).parquet<br/>per-step boolean label"]
+    end
+
+    subgraph GROOT["GR00T N1.7 CFG policy (gr00t_n1d7_cfg) — add_value_head: False"]
+        OBS["Images + state + language"] --> BB
+        BB["Cosmos-Reason2-2B VLM backbone<br/>(FROZEN)"] --> VLSA
+        VLSA["vl_self_attention<br/>(masked — padding fix)"] --> CTX["VL context tokens<br/>(cross-attention memory)"]
+        CTX --> DIT
+
+        LBL["advantage label<br/>POS / NEG / NULL(dropout 0.3)"] --> AE
+        AE["AdvantageEmbedding<br/>nn.Embedding(3, inner_dim)<br/>zero-init (adaLN-zero)"] -->|"+ (forward hook)"| TEMB
+
+        T["flow-matching timestep t"] --> TE["timestep_encoder"] --> TEMB["temb (conditioning vector)"]
+        TEMB --> ADALN["AdaLayerNorm in every DiT block<br/>x = norm(x)·(1+scale) + shift<br/>scale, shift = Linear(SiLU(temb))"]
+
+        ST["state + noisy action chunk"] --> DIT["AlternateVLDiT<br/>(flow-matching action head, TRAINED)"]
+        ADALN --> DIT
+        DIT --> ACT["action chunk (40 steps)"]
+    end
+
+    PQ -.->|"training: label per sample<br/>(train_cfg.py, joint lr=1e-4)"| LBL
+
+    subgraph INF["Inference (get_action_cfg)"]
+        W1["w = 1.0: single pass, label=POS<br/>(β=1, used for data collection)"]
+        W2["w > 1.0: dual pass<br/>pred = uncond(NULL) + w·(cond(POS) − uncond(NULL))<br/>(inference-only lever — never train on these actions)"]
+    end
+
+    GROOT ~~~ INF
