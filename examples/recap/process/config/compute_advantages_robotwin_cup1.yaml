@@ -1,0 +1,46 @@
+# RECAP r1 advantages for the RoboTwin bowls line — rollouts (E024) + rerender
+# demos (E009), per-type paper quantiles (~40% rollout / ~30% demo positive),
+# value critic E025. Writes meta/advantages_cup1.parquet.
+defaults:
+  - compute_advantages_n1d7
+  - _self_
+
+advantage:
+  value_checkpoint: "/home/duynguyen/Desktop/RESEARCH/VR/RLinf/logs/value_sft/robotwin_sft_value_gr00t_n1d7_cup1-20260724-10:33:32/E039-value-critic-cup1/checkpoints/global_step_3000"
+  tag: "cup1"
+  returns_tag: "cup1"
+  num_dataloader_workers_per_gpu: 0
+
+  sft_force_positive: false
+  # NOTE 2026-08-26: label DIRECTION IS CONTESTED. Our code's positive_quantile
+  # = FRACTION POSITIVE (verified empirically). One reading of the RECAP paper
+  # (arXiv:2511.14759 Sec V-D, threshold eps_ell at the 30th percentile with
+  # I_t = 1(A > eps)) gives ~70% positive; the RLinf docs and the paper appendix
+  # (~30% pretrain / 40% finetune) point to ~30% positive instead. Weight of
+  # evidence favours ~30%, so these are the ORIGINAL values. Settle definitively
+  # vs the paper before relying on this. NB: the paper's OTHER "30%" is the
+  # indicator-dropout rate — unrelated to this threshold.
+  positive_quantile_by_type:
+    rollout: 0.4
+    sft: 0.3
+
+data:
+  model_type: "pi05"
+  robot_type: "robotwin"
+
+  train_data_paths:
+    - dataset_path: "/data/datasets/robotwin_cups_rollouts_r1_lerobot"
+      robot_type: "robotwin"
+      type: "rollout"
+      weight: 1.0
+    - dataset_path: "/data/datasets/robotwin_cups500"
+      robot_type: "robotwin"
+      type: "sft"
+      weight: 1.0
+
+  advantage_lookahead_step: 16
+  gamma: 1.0
+
+  # r1 returns: rollouts [-799, 0], demos [-525, 0]
+  return_min: -799.0
+  return_max: 0.0

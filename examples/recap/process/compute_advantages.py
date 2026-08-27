@@ -214,6 +214,14 @@ KEY_MAPPINGS = {
         "state": "observation/state",
         "task": "prompt",
     },
+    "robotwin": {
+        # dual-arm RoboTwin (aloha-agilex): head -> base image slot, left wrist
+        # -> wrist slot, matching the value critic's training repack
+        "observation.images.head": "observation/image",
+        "observation.images.left_wrist": "observation/wrist_image",
+        "observation.state": "observation/state",
+        "task": "prompt",
+    },
     "droid": {
         "observation.exterior_image_1_left": "observation/exterior_image_1_left",
         "observation.wrist_image_left": "observation/wrist_image_left",

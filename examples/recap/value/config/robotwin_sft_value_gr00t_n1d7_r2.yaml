@@ -1,0 +1,125 @@
+# RECAP value critic for the RoboTwin bowls line (r1 rollouts + rerender demos).
+# Value model is policy-agnostic (SigLIP2 + Gemma3 on images+state+returns);
+# RoboTwin specifics: repack robot_type "robotwin" (head + left wrist),
+# 14-dim actions, horizon 16, r1 return range, tag r1.
+#
+# Usage (openpi venv):
+#   python examples/recap/value/train_value.py \
+#     --config-path config --config-name robotwin_sft_value_gr00t_n1d7
+
+defaults:
+  - model/value@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - _self_
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/sft/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "/data/checkpoints/robotwin_value_r2"
+    project_name: robotwin-bowls
+    experiment_name: "E031-value-critic-r2"
+    logger_backends: ["tensorboard", "wandb"]
+
+  max_epochs: 30000
+  max_steps: 3000  # E025/E031 recipe (was -1 = unbounded)
+  val_check_interval: -1
+  save_interval: 500
+
+data:
+  tag: "r2"
+
+  train_data_paths:
+    - dataset_path: "/data/datasets/robotwin_rollouts_r2_lerobot"
+      type: "rollout"
+      weight: 1.0
+      robot_type: "robotwin"
+      model_type: "pi05"
+    - dataset_path: "/data/datasets/robotwin_bowls_rr"
+      type: "sft"
+      weight: 1.0
+      robot_type: "robotwin"
+      model_type: "pi05"
+
+  eval_data_paths: []
+
+  train_num_workers: 8
+  eval_num_workers: 0
+  prefetch_factor: 4
+  persistent_workers: false
+  pin_memory: false
+
+  include_state: true
+  gamma: 1.0
+  action_horizon: 16
+  normalize_to_minus_one_zero: true
+  include_next_obs: false
+  action_dim: 14
+  robot_type: "robotwin"
+  model_type: "pi05"
+
+  # r1 returns: rollouts [-799, 0], demos [-525, 0]
+  return_min: -799.0
+  return_max: 0.0
+
+  balance_weights: true
+  seed: 42
+
+algorithm:
+  adv_type: gae
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 8
+  global_batch_size: 256
+  seed: 0
+
+  model:
+    precision: bf16
+    siglip_path: "/data/checkpoints/siglip2-so400m-patch14-224"
+    gemma3_path: "/data/checkpoints/gemma-3-270m"
+    tokenizer_path: "/data/checkpoints/gemma-3-270m"
+    freeze_vlm: false
+    action_dim: 14
+    action_horizon: 16
+
+  optim:
+    lr: 5.0e-5
+    value_lr: 1.0e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    weight_decay: 1e-10
+    clip_grad: 1.0
+    lr_scheduler: "constant"
+    lr_warmup_steps: 500
+    total_training_steps: 2000
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    use_orig_params: False
+    gradient_checkpointing: True
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False

@@ -65,6 +65,15 @@ _REPACK_KEYS = {
         "actions": "action",
         "prompt": "prompt",
     },
+    "robotwin": {
+        # dual-arm RoboTwin (aloha-agilex): head cam -> base image, left wrist
+        # -> wrist slot (value critic is policy-agnostic; two views suffice)
+        "observation/image": "observation.images.head",
+        "observation/wrist_image": "observation.images.left_wrist",
+        "observation/state": "observation.state",
+        "actions": "action",
+        "prompt": "prompt",
+    },
     "franka": {
         "observation/image": "image",
         "observation/state": "state",
@@ -314,7 +323,7 @@ class ValueDataset(Dataset):
             )
         transforms_list.append(_openpi_transforms.RepackTransform(repack_keys))
 
-        if robot in ("libero", "libero_v2"):
+        if robot in ("libero", "libero_v2", "robotwin"):
             transforms_list.append(
                 libero_policy.LiberoInputs(model_type=model_type_enum)
             )

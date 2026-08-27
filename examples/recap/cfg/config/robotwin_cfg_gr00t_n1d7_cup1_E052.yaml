@@ -1,0 +1,145 @@
+# E052 — the FIRST paper-faithful RECAP cond-SFT on the cup line.
+#
+# Everything upstream is now correct for the first time:
+#   - is_success bug fixed (E048) -> returns carry real failure penalty
+#   - value critic retrained on corrected returns (E050, spearman 0.995)
+#   - advantage labels FLIPPED to ~70% positive (E051), was inverted 30%
+#   - advantages are state-driven + correctly oriented (E050b/#11: success frames
+#     92.7% POS, failure 46%, early-failure 27%)
+#   - conditioning mechanism verified LIVE (E053: label moves actions, 0-flip floor)
+#   - lookahead=16 (covers the action chunk)
+#
+# Paper-faithful choices (arXiv:2511.14759): AGGREGATED D = demos + rollouts
+# (demos regularize, per Sec IV-B "train on ALL data"); JOINT training of
+# conditioning with the head at SFT lr 1e-4; film conditioning; CFG dropout 0.3.
+# NO train_advantage_embedding_only (that was the E046 isolation ablation, not
+# the paper recipe). The extra-SFT control is the w=0 (NULL) eval arm, as in E049.
+#
+# Eval plan after training: POS (w=1) / NULL (w=0) / NEG at n=500, + fixed-x_T
+# divergence. POS>>NULL => conditioning finally has a lever; POS~=NULL => even
+# correct labels don't help single-task => points at missing Phase-0.
+
+defaults:
+  - training_backend/fsdp@actor.fsdp_config
+  - _self_
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/sft/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: robotwin-bowls
+    experiment_name: "E052-cfg-condsft-cup1-corrected"
+    logger_backends: ["tensorboard", "wandb"]
+
+  max_epochs: 30000
+  max_steps: 5000
+  val_check_interval: -1
+  save_interval: 1000
+
+data:
+  num_workers: 8
+  advantage_tag: "cup1"
+  video_backend: "torchcodec"
+  balance_dataset_weights: true
+  seed: 42
+
+  train_data_paths:
+    # AGGREGATED D: rollouts (real success/failure contrast) + demos (expert
+    # regularization anchor). The CFG dataloader
+    # (rlinf/data/datasets/recap/gr00t_n1d7_cfg.py:build_gr00t_n1d7_cfg_dataloader)
+    # ConcatDatasets EVERY entry, so mixing DOES work here (corrects the stale
+    # "no multi-dataset mixing" note in the cup1_rollouts config, which described
+    # resolve_lerobot_repo_id — a different, plain-SFT-only code path). Both
+    # datasets carry meta/advantages_cup1.parquet from E051 (70% positive).
+    # Plain ConcatDataset => mixing at natural frame proportions (rollouts 66k /
+    # demos 288k ~= 19/81); weight is inert on this path.
+    - dataset_path: "/data/datasets/robotwin_cups_rollouts_r1_lerobot"
+      type: "rollout"
+      weight: 1.0
+    - dataset_path: "/data/datasets/robotwin_cups500"
+      type: "sft"
+      weight: 1.0
+
+algorithm:
+  adv_type: gae
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 2
+  global_batch_size: 32
+  seed: 0
+
+  model:
+    precision: bf16
+    is_lora: false
+    load_to_device: true
+    model_path: "/data/checkpoints/robotwin_cups500_abs_ft/checkpoint-10000"
+    backbone_model_path: "/data/checkpoints/Cosmos-Reason2-2B"
+    model_type: "gr00t_n1d7_cfg"
+    embodiment_tag: "new_embodiment"
+    num_action_chunks: 16
+    obs_converter_type: "libero"
+    denoising_steps: 4
+    advantage_cfg_dropout_prob: 0.3
+    cfg_guidance_weight: 1.0
+    positive_only_conditional: false
+    conditioning: "film"
+    add_value_head: False
+    rl_head_config:
+      joint_logprob: False
+      noise_method: "flow_sde"
+      ignore_last: False
+      safe_get_logprob: False
+      noise_anneal: False
+      noise_params: [0.7, 0.3, 400]
+      noise_level: 0.5
+      action_noise_scale: 0.1
+      add_value_head: False
+      chunk_critic_input: False
+      detach_critic_input: True
+      disable_dropout: True
+      use_vlm_value: False
+      value_vlm_mode: "mean_token"
+      padding_value: 570
+
+  optim:
+    lr: 1.0e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    weight_decay: 1.0e-10
+    clip_grad: 1.0
+    lr_scheduler: "cosine"
+    lr_warmup_steps: 500
+    total_training_steps: 5000
+    min_lr: 0.0
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    use_orig_params: True
+    gradient_checkpointing: False
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: fp32
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False

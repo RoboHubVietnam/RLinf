@@ -58,6 +58,19 @@ def main():
             "and produces a policy that never grasps (0% SR)."
         ),
     )
+    ap.add_argument(
+        "--use_intervened_actions",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "When a safety-filter intervention overrode the policy action "
+            "(infos[i+1]['safety']['intervened']), record the EXECUTED "
+            "action (infos[i+1]['safety']['executed_action'], env "
+            "convention) instead of the policy's — the dataset must contain "
+            "the avoidance behavior that actually ran, not the action the "
+            "filter rejected."
+        ),
+    )
     args = ap.parse_args()
 
     # recursive so it also picks up per-pass subdirs (run_0/, run_1/, ...)
@@ -74,10 +87,12 @@ def main():
     )
 
     n_succ = n_fail = 0
+    n_intervened = 0
     for p in pkls:
         d = pickle.load(open(p, "rb"))
         obs = d["observations"]
         actions = d["actions"]
+        infos = d.get("infos", [])
         success = bool(d["success"])
         n_succ += success
         n_fail += not success
@@ -86,6 +101,13 @@ def main():
         episode = []
         for i in range(n_frames):
             act = np.asarray(actions[i], dtype=np.float32)
+            if args.use_intervened_actions and i + 1 < len(infos):
+                safety = (infos[i + 1] or {}).get("safety") or {}
+                if bool(safety.get("intervened", False)) and (
+                    safety.get("executed_action") is not None
+                ):
+                    act = np.asarray(safety["executed_action"], dtype=np.float32)
+                    n_intervened += 1
             if args.gripper_from_env:
                 act = act.copy()
                 act[..., -1] = (1.0 - act[..., -1]) / 2.0
@@ -103,6 +125,8 @@ def main():
 
     writer.finalize()
     print(f"Converted {len(pkls)} episodes: {n_succ} success / {n_fail} fail")
+    if n_intervened:
+        print(f"Substituted {n_intervened} intervened (filter-executed) actions")
 
     # Copy the SFT modality.json so GR00T's reader maps the same keys.
     if args.sft_modality:

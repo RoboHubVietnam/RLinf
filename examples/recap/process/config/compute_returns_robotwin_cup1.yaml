@@ -1,0 +1,24 @@
+# RECAP returns for the RoboTwin bowls line: rollouts (mixed success/fail)
+# and demos (all success), tagged separately.
+
+data:
+  data_root: null
+  train_data_paths:
+    - dataset_path: /data/datasets/robotwin_cups_rollouts_r1_lerobot
+      type: rollout
+    - dataset_path: /data/datasets/robotwin_cups500
+      type: sft
+
+  dataset_type: "rollout"
+  gamma: 1.0
+  failure_reward: -300.0
+
+  tag: "cup1"
+  num_workers: 16
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job:
+    chdir: false
