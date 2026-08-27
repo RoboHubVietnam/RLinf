@@ -29,13 +29,23 @@ if [ "$MODEL_TYPE" = "gr00t_cfg" ]; then
   # actor.model, so setting it here is enough (and rollout.model.model_type does
   # not exist in the eval config). cfg_guidance_weight is a new key -> needs '+'.
   EXTRA+=("actor.model.model_type=gr00t_cfg")
-  [ "$GW" != "-" ] && EXTRA+=("+actor.model.cfg_guidance_weight=$GW")
+  # FIXED 2026-07-25: the new evaluations/ entrypoint reads
+  # rollout.model.model_type directly (the old one deep-copied actor.model),
+  # so the rollout side must be set too ('+' = key absent from the struct).
+  EXTRA+=("+rollout.model.model_type=gr00t_cfg")
+  if [ "$GW" != "-" ]; then
+    EXTRA+=("+actor.model.cfg_guidance_weight=$GW")
+    EXTRA+=("+rollout.model.cfg_guidance_weight=$GW")
+  fi
 fi
 [ "$CKPT" != "-" ] && EXTRA+=("+runner.ckpt_path=$CKPT")
 
 for s in $SEEDS; do
   echo "--- eval seed $s -> $OUT_DIR/seed_$s ---"
-  python examples/embodiment/eval_embodied_agent.py --config-name libero_10_ppo_gr00t \
+  # FIXED 2026-07-25: entrypoint moved to evaluations/ in upstream refactor
+  # (2e1c99f7); config still lives in examples/embodiment/config.
+  python evaluations/eval_embodied_agent.py \
+    --config-path $(pwd)/examples/embodiment/config --config-name libero_10_ppo_gr00t \
     actor.model.model_path=$SFT rollout.model.model_path=$SFT \
     env.eval.total_num_envs=16 \
     env.eval.use_ordered_reset_state_ids=True \

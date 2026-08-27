@@ -16,6 +16,8 @@ Usage:
 import argparse
 import glob
 import os
+import sys
+from pathlib import Path
 
 import imageio.v2 as imageio
 import numpy as np
@@ -72,8 +74,17 @@ def main():
     ap.add_argument("--wandb_project", default="rlinf-recap-gr00t")
     ap.add_argument("--wandb_run", default="recap_gr00t_libero10")
     ap.add_argument("--wandb_entity", default=None)
-    ap.add_argument("--out_dir", default="/data/checkpoints/recap_compare_videos")
+    ap.add_argument("--out_dir", default="libero-recap/cfg-step-compare",
+                    help="relative values resolve under the labboard-pinned "
+                         "artifact root ($RLINF_ARTIFACTS, default "
+                         "<repo>/artifacts); absolute paths are used verbatim")
     args = ap.parse_args()
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from artifact_paths import resolve_artifact_dir
+
+    args.out_dir = str(resolve_artifact_dir(args.out_dir, create=True))
+    print(f"[compare] videos -> {args.out_dir}", flush=True)
 
     import wandb
 

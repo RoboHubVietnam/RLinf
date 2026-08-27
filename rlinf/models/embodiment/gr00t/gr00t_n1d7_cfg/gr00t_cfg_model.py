@@ -57,6 +57,7 @@ class GR00T_N1_7_ForCFG(GR00T_N1_7_ForRLActionPrediction):
         cfg_guidance_weight: float = 1.0,
         positive_only_conditional: bool = False,
         conditioning: str = "film",
+        cfg_conditioning_label: str = "pos",
         denoising_steps: Optional[int] = None,
         output_action_chunks: int = 1,
         **kwargs,
@@ -84,6 +85,7 @@ class GR00T_N1_7_ForCFG(GR00T_N1_7_ForRLActionPrediction):
             cfg_guidance_weight=cfg_guidance_weight,
             positive_only_conditional=positive_only_conditional,
             conditioning=conditioning,
+            cfg_conditioning_label=cfg_conditioning_label,
         )
         if denoising_steps is not None and hasattr(
             self.action_head, "num_inference_timesteps"

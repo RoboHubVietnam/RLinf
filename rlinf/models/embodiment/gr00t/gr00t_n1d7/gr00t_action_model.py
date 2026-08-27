@@ -956,6 +956,7 @@ class GR00T_N1_7_ForRLActionPrediction(Gr00tN1d7, BasePolicy):
     def eval(self):
         self._modality_transform.eval()
         super().eval()
+        return self  # match nn.Module.eval() contract (callers chain .to().eval())
 
     @staticmethod
     def _check_state_is_batched(obs: dict[str, Any]) -> bool:

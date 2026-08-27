@@ -108,7 +108,15 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
         cfg_guidance_weight=cfg.get("cfg_guidance_weight", 1.0),
         positive_only_conditional=cfg.get("positive_only_conditional", False),
         conditioning=cfg.get("conditioning", "film"),
+        cfg_conditioning_label=cfg.get("cfg_conditioning_label", "pos"),
     )
+
+    # Optional fixed initial-noise seed for x_T (common random numbers / the
+    # action-divergence diagnostic). None => production behaviour (unseeded).
+    _xt_seed = cfg.get("cfg_xt_seed", None)
+    if _xt_seed is not None:
+        model.action_head.cfg_xt_seed = int(_xt_seed)
+        logger.info(f"cfg_xt_seed set: x_T fixed to seed {int(_xt_seed)} (deterministic init noise)")
 
     model.to(torch_dtype)
 
@@ -140,6 +148,12 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     # temb-space bias consumed by the existing adaLN layers. Needs a much
     # larger lr than a head fine-tune (from-scratch param); pair with
     # optim.param_group_overrides or a high optim.lr.
+    #
+    # CAVEAT (measured, E046 2026-07-25): freezing the head does NOT by itself
+    # make w=0.0 equal the base policy. CFG dropout selects NULL ~30% of steps,
+    # so the NULL row trains too and drifts (|NULL| reached 0.63), costing ~9pt
+    # SR on its own. Zero-init only makes NULL == base *at step 0*. Set
+    # freeze_null_advantage_row to keep it there for the whole run.
     if cfg.get("train_advantage_embedding_only", False):
         frozen = 0
         for name, param in model.named_parameters():
@@ -149,6 +163,36 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
         logger.info(
             f"train_advantage_embedding_only: froze {frozen} params; only the "
             "advantage embedding trains"
+        )
+
+    # Pin the NULL row of the advantage embedding at its zero init so the
+    # unconditional pass is EXACTLY the loaded SFT policy for the whole run.
+    # The row still participates in the forward pass (CFG dropout keeps sampling
+    # it); only its gradient is zeroed. With this on, w=0.0 reproduces the base
+    # SR by construction and w=1.0 - w=0.0 isolates the conditioning lever with
+    # no confound from either the head update or NULL drift.
+    if cfg.get("freeze_null_advantage_row", False):
+        if not cfg.get("train_advantage_embedding_only", False):
+            logger.warning(
+                "freeze_null_advantage_row is set but train_advantage_embedding_only "
+                "is not: the action head still trains, so w=0.0 will NOT equal the "
+                "base policy."
+            )
+        from rlinf.models.embodiment.gr00t.gr00t_n1d7_cfg.cfg_action_head import (
+            AdvantageEmbedding,
+        )
+
+        null_idx = AdvantageEmbedding.NULL_IDX
+
+        def _zero_null_row_grad(grad: torch.Tensor) -> torch.Tensor:
+            grad = grad.clone()
+            grad[null_idx] = 0.0
+            return grad
+
+        adv_emb.weight.register_hook(_zero_null_row_grad)
+        logger.info(
+            f"freeze_null_advantage_row: NULL row (idx {null_idx}) pinned at "
+            "zero-init; w=0.0 is exactly the loaded SFT policy"
         )
 
     if cfg.rl_head_config.get("disable_dropout", False):

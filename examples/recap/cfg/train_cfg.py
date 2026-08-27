@@ -38,6 +38,21 @@ def main(cfg) -> None:
     cfg = validate_cfg(cfg)
     print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
 
+    # GUARD (2026-07-25): README rule 1 — the advantage embedding is zero-init
+    # and MUST train at SFT lr (~1e-4). At fine-tune lr (2e-6) it never moves
+    # (|POS-NULL| ~0.005 vs 0.34), so conditioning is a no-op and the whole run
+    # is void. This silently invalidated E032 and E040 (both launched via
+    # run_cfg_sft.sh, which passes no lr override). Fail loudly instead.
+    _lr = float(cfg.actor.optim.lr)
+    if _lr < 1.0e-5:
+        raise SystemExit(
+            f"[RECAP GUARD] actor.optim.lr={_lr:g} is below 1e-5. Advantage "
+            "conditioning will NOT train (README rule 1). Pass "
+            "actor.optim.lr=1.0e-4 or fix the config default. "
+            "Verify after training with the EMBDIAG check "
+            "(|POS-NULL| should be >= 0.05)."
+        )
+
     cluster = Cluster(cluster_cfg=cfg.cluster)
     component_placement = HybridComponentPlacement(cfg, cluster)
 

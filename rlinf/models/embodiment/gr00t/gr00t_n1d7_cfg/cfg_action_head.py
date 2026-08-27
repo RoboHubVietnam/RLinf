@@ -88,13 +88,31 @@ class CFGGr00tN1d7ActionHead(Gr00tN1d7ActionHead):
         cfg_guidance_weight: float = 1.0,
         positive_only_conditional: bool = False,
         conditioning: str = "film",
+        cfg_conditioning_label: str = "pos",
     ):
         super().__init__(config)
         if conditioning not in ("film", "token", "text"):
             raise ValueError(
                 f"conditioning must be 'film', 'token', or 'text', got {conditioning}"
             )
+        _label_idx = {
+            "pos": AdvantageEmbedding.POS_IDX,
+            "neg": AdvantageEmbedding.NEG_IDX,
+            "null": AdvantageEmbedding.NULL_IDX,
+        }
+        if cfg_conditioning_label not in _label_idx:
+            raise ValueError(
+                f"cfg_conditioning_label must be one of {sorted(_label_idx)}, "
+                f"got {cfg_conditioning_label!r}"
+            )
         self.conditioning = conditioning
+        # Which embedding row the CONDITIONAL branch uses at inference. Defaults
+        # to POS (the operating point). Serving "neg" is a diagnostic: if the
+        # labels carry advantage semantics, SR should order POS > NULL > NEG.
+        # Without that ordering, POS != NULL only shows the two branches differ,
+        # which an arbitrary partition of the data would also produce.
+        self.cfg_conditioning_label = cfg_conditioning_label
+        self.cfg_cond_idx = _label_idx[cfg_conditioning_label]
         self.advantage_cfg_dropout_prob = advantage_cfg_dropout_prob
         self.cfg_guidance_weight = cfg_guidance_weight
         self.positive_only_conditional = positive_only_conditional
@@ -396,17 +414,32 @@ class CFGGr00tN1d7ActionHead(Gr00tN1d7ActionHead):
 
         bsz = vl_embs.shape[0]
         device = vl_embs.device
-        actions = torch.randn(
-            size=(bsz, self.config.action_horizon, self.action_dim),
-            dtype=vl_embs.dtype,
-            device=device,
-        )
+        # Initial flow-matching noise x_T ~ N(0,I), redrawn per action chunk. This
+        # is the ONLY source of eval-time stochasticity (denoising is a
+        # deterministic Euler integration below). Set self.cfg_xt_seed to a fixed
+        # int for common-random-numbers evals or the action-divergence diagnostic
+        # (holds x_T constant so a POS/NULL/NEG delta is the label effect alone,
+        # not noise). Default None = production behaviour (unseeded).
+        _xt_seed = getattr(self, "cfg_xt_seed", None)
+        if _xt_seed is not None:
+            _gen = torch.Generator(device=device).manual_seed(int(_xt_seed))
+            actions = torch.randn(
+                size=(bsz, self.config.action_horizon, self.action_dim),
+                dtype=vl_embs.dtype, device=device, generator=_gen,
+            )
+        else:
+            actions = torch.randn(
+                size=(bsz, self.config.action_horizon, self.action_dim),
+                dtype=vl_embs.dtype, device=device,
+            )
 
         w = self.cfg_guidance_weight
         # Text conditioning lives in the prompt (set at inference) -> single base
         # pass; head-level guidance (dual pass) only applies to film/token.
         dual_pass = (w != 1.0) and self.conditioning != "text"
-        pos_labels = torch.full((bsz,), AdvantageEmbedding.POS_IDX, dtype=torch.long, device=device)
+        # Conditional branch row: POS by default; "neg"/"null" for the
+        # label-semantics diagnostic (see cfg_conditioning_label in __init__).
+        pos_labels = torch.full((bsz,), self.cfg_cond_idx, dtype=torch.long, device=device)
         null_labels = torch.full((bsz,), AdvantageEmbedding.NULL_IDX, dtype=torch.long, device=device)
 
         num_steps = self.num_inference_timesteps
