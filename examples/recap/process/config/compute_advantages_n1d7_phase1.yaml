@@ -19,6 +19,12 @@ advantage:
 
   # Paper calibration: threshold demos like everything else (no force-True).
   sft_force_positive: false
+  # NOTE 2026-08-26: label DIRECTION IS CONTESTED. Our code's positive_quantile
+  # = FRACTION POSITIVE (verified empirically). One reading of the RECAP paper
+  # (arXiv:2511.14759 Sec V-D, 30th-percentile threshold + I_t=1(A>eps)) gives
+  # ~70% positive; the RLinf docs and the paper appendix (~30% pretrain / 40%
+  # finetune) point to ~30% positive. Weight of evidence favours ~30%, so these
+  # are the ORIGINAL values. Settle vs the paper before relying on this.
   positive_quantile_by_type:
     rollout: 0.4
     sft: 0.3

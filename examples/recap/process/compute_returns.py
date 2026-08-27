@@ -50,6 +50,26 @@ logger = logging.getLogger(__name__)
 _READ_COLUMNS = ["episode_index", "frame_index", "is_success", "task_index", "task"]
 
 
+def _as_bool(value) -> bool:
+    """Coerce a per-frame `is_success` cell to a scalar bool.
+
+    LeRobot stores a feature declared with shape (1,) as list<bool>, so the cell
+    is `[True]`/`[False]` rather than a scalar. `bool([False])` is True (non-empty
+    list), which silently turns every failure into a success. Unwrap nested
+    sequences first, then coerce.
+    """
+    while isinstance(value, (list, tuple, np.ndarray)):
+        if len(value) == 0:
+            return False
+        if len(value) > 1:
+            raise ValueError(
+                f"is_success cell has {len(value)} elements, expected a scalar "
+                f"or a length-1 sequence: {value!r}"
+            )
+        value = value[0]
+    return bool(value)
+
+
 def compute_returns_for_episode(
     episode_length: int,
     is_success: bool,
@@ -147,6 +167,14 @@ def _process_single_parquet(
     is_success_col = None
     if "is_success" in col_names:
         is_success_col = table.column("is_success").to_pylist()
+        # LeRobot writes features declared with shape (1,) as list<bool>, so a
+        # per-frame value arrives as [False] — and `bool([False])` is True
+        # because a non-empty list is truthy. That silently relabelled EVERY
+        # failed episode as a success (RoboTwin cups: 57/40 read as 97/0), so
+        # failure_reward was never applied and the return degenerated to pure
+        # time-to-end. Never compare these values with bare bool(); use
+        # _as_bool. LIBERO's rollout set stores a scalar bool, which is why the
+        # bug only ever bit the RoboTwin line. See docs/log/daily/2026-07-26.md.
     elif dataset_type != "sft":
         raise ValueError(
             f"Column 'is_success' not found in {pq_file}. "
@@ -157,13 +185,15 @@ def _process_single_parquet(
     returns_arr = np.empty(n, dtype=np.float32)
     rewards_arr = np.empty(n, dtype=np.float32)
 
+    n_succ = n_fail = 0
     for _, ep_start, ep_end in episodes:
         ep_length = ep_end - ep_start
 
         if dataset_type == "sft":
             is_success = True
         else:
-            is_success = bool(is_success_col[ep_end - 1])
+            is_success = _as_bool(is_success_col[ep_end - 1])
+        n_succ, n_fail = (n_succ + 1, n_fail) if is_success else (n_succ, n_fail + 1)
 
         ep_returns, ep_rewards = compute_returns_for_episode(
             episode_length=ep_length,
@@ -173,6 +203,22 @@ def _process_single_parquet(
         )
         returns_arr[ep_start:ep_end] = ep_returns
         rewards_arr[ep_start:ep_end] = ep_rewards
+
+    # Surface the label split. A rollout shard reading 100% success is the
+    # signature of the list<bool> truthiness bug (or of success labels that were
+    # never recorded) — either way failure_reward is a no-op and the returns
+    # carry no outcome signal, so say so loudly instead of training on it.
+    if dataset_type != "sft":
+        logger.info(
+            f"{Path(pq_file).name}: {n_succ} success / {n_fail} fail "
+            f"({len(episodes)} episodes)"
+        )
+        if n_fail == 0 and len(episodes) > 1:
+            logger.warning(
+                f"{Path(pq_file).name}: ALL {len(episodes)} rollout episodes read as "
+                "SUCCESS -> failure_reward is never applied and the return "
+                "degenerates to time-to-end. Check the 'is_success' column dtype."
+            )
 
     if "task" in col_names:
         prompts_list = [str(t) for t in table.column("task").to_pylist()]
