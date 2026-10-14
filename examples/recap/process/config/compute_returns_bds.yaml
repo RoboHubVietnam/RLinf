@@ -1,0 +1,47 @@
+# Compute returns for the BDS VR_H5D pick task (left arm + left vacuum)
+#
+# Usage:
+#   cd examples/recap/process && python compute_returns.py --config-name compute_returns_bds
+#
+# Every dataset is COPIED to `output_path` first, because compute_returns writes
+# meta/returns_{tag}.parquet and edits meta/info.json + meta/stats.json in place.
+# The source datasets are shared (some owned by other users), so never run
+# in-place on them.
+
+data:
+  data_root: null
+
+  train_data_paths:
+    # Teleop demonstrations: all episodes successful (reward=-1/step, last=0).
+    - dataset_path: /mnt/data/sftp/data/vla/data_sim_ac/20261006_VR_H5D_VFE_sim_teleop_pick_success_openpi
+      output_path: /mnt/data/sftp/data/locht1/workspace/recap_bds/sft_teleop_20261006
+      type: sft
+    # Policy rollouts: success is read from `success_key` at the last frame.
+    - dataset_path: /mnt/data/sftp/data/vla/data_sim_ac/20261006_VR_H5D_VFE_sim_infer_pick_fail
+      output_path: /mnt/data/sftp/data/locht1/workspace/recap_bds/rollout_fail_20261006
+      type: rollout
+    - dataset_path: /mnt/data/sftp/data/vla/data_sim_ac/20261006_VR_H5D_VFE_sim_infer_pick_timeout
+      output_path: /mnt/data/sftp/data/locht1/workspace/recap_bds/rollout_timeout_20261006
+      type: rollout
+
+  dataset_type: "sft"
+  gamma: 1.0
+  # Reward on the last step of failed / timed-out episodes (RLinf LIBERO default;
+  # BDS episodes are 300-2000 frames long, so revisit if returns look degenerate).
+  failure_reward: -300.0
+
+  # Per-frame column holding the episode success flag (read at the last frame,
+  # truthy = success). NOTE: in the existing infer fail/timeout data this column
+  # is 0 on every frame and no success example was available to confirm 1=success.
+  # CONFIRM before running; replace with your own column name if different.
+  success_key: annotation.human.validity
+
+  tag: bds_v1
+  num_workers: 16
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job:
+    chdir: false

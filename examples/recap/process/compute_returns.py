@@ -47,7 +47,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 logger = logging.getLogger(__name__)
 
 # Columns needed for computation (tiny — no images)
-_READ_COLUMNS = ["episode_index", "frame_index", "is_success", "task_index", "task"]
+_READ_COLUMNS = ["episode_index", "frame_index", "task_index", "task"]
 
 
 def compute_returns_for_episode(
@@ -113,10 +113,13 @@ def _process_single_parquet(
     gamma: float,
     failure_reward: float,
     tasks: dict[int, str],
+    success_key: str = "is_success",
 ) -> pa.Table | None:
     """Process a single parquet file: read only metadata columns, compute returns.
 
-    Only reads episode_index, frame_index, is_success, task_index — no images.
+    Only reads episode_index, frame_index, the success column (``success_key``),
+    task_index — no images. The success value of an episode is read from its last
+    frame and must be truthy for success (e.g. bool, or 1/0).
 
     Returns:
         Arrow table with (episode_index, frame_index, return, reward, prompt)
@@ -131,7 +134,7 @@ def _process_single_parquet(
 
     pf = pq.ParquetFile(pq_file)
     available = set(pf.schema_arrow.names)
-    cols_to_read = [c for c in _READ_COLUMNS if c in available]
+    cols_to_read = [c for c in [*_READ_COLUMNS, success_key] if c in available]
 
     table = pq.read_table(pq_file, columns=cols_to_read)
     n = table.num_rows
@@ -145,12 +148,12 @@ def _process_single_parquet(
     episodes = get_episode_boundaries(ep_indices)
 
     is_success_col = None
-    if "is_success" in col_names:
-        is_success_col = table.column("is_success").to_pylist()
+    if success_key in col_names:
+        is_success_col = table.column(success_key).to_pylist()
     elif dataset_type != "sft":
         raise ValueError(
-            f"Column 'is_success' not found in {pq_file}. "
-            f"Non-SFT datasets (dataset_type={dataset_type!r}) require 'is_success' "
+            f"Column {success_key!r} not found in {pq_file}. "
+            f"Non-SFT datasets (dataset_type={dataset_type!r}) require {success_key!r} "
             "to correctly distinguish successful and failed episodes."
         )
 
@@ -202,6 +205,7 @@ def process_dataset(
     failure_reward: float,
     num_workers: int = 8,
     tag: str | None = None,
+    success_key: str = "is_success",
 ) -> dict:
     """Process a LeRobot dataset and compute return/reward/prompt.
 
@@ -217,6 +221,7 @@ def process_dataset(
         failure_reward: Penalty for failed episodes
         num_workers: Number of parallel workers for parquet processing
         tag: Optional tag for the sidecar filename
+        success_key: Name of the per-frame column holding the episode success flag
 
     Returns:
         Statistics dict with return/reward stats
@@ -259,7 +264,7 @@ def process_dataset(
     if effective_workers <= 1:
         for pq_file in tqdm(parquet_files, desc="Processing parquet files"):
             tbl = _process_single_parquet(
-                pq_file, dataset_type, gamma, failure_reward, tasks
+                pq_file, dataset_type, gamma, failure_reward, tasks, success_key
             )
             if tbl is not None:
                 result_tables.append(tbl)
@@ -275,6 +280,7 @@ def process_dataset(
                     gamma,
                     failure_reward,
                     tasks,
+                    success_key,
                 )
                 futures[fut] = pq_file
 
@@ -405,6 +411,7 @@ def main(cfg: DictConfig) -> None:
         )
     num_workers = cfg.data.get("num_workers", 8)
     tag = cfg.data.get("tag", None)
+    default_success_key = cfg.data.get("success_key", "is_success")
 
     datasets_list = cfg.data.get("train_data_paths", None)
 
@@ -433,6 +440,7 @@ def main(cfg: DictConfig) -> None:
                     "failure_reward": entry.get(
                         "failure_reward", default_failure_reward
                     ),
+                    "success_key": entry.get("success_key", default_success_key),
                 }
             )
     else:
@@ -456,6 +464,7 @@ def main(cfg: DictConfig) -> None:
                 "dataset_type": default_type,
                 "gamma": default_gamma,
                 "failure_reward": default_failure_reward,
+                "success_key": default_success_key,
             }
         )
 
@@ -483,6 +492,7 @@ def main(cfg: DictConfig) -> None:
             failure_reward=ds_config["failure_reward"],
             num_workers=num_workers,
             tag=tag,
+            success_key=ds_config["success_key"],
         )
         all_stats.append(
             {

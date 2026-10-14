@@ -26,6 +26,9 @@ from openpi.training.config import (
     TrainConfig,
 )
 
+from rlinf.models.embodiment.openpi.dataconfig.bds_dataconfig import (
+    LeRobotBDSDataConfig,
+)
 from rlinf.models.embodiment.openpi.dataconfig.behavior_dataconfig import (
     LeRobotBehaviorDataConfig,
 )
@@ -442,6 +445,24 @@ _CONFIGS = [
             assets=AssetsConfig(asset_id="assets/droid"),
         ),
         pytorch_weight_path="checkpoints/torch/pi05_droid_polaris",
+    ),
+    TrainConfig(
+        name="pi05_bds_vfe_sim_pick_left",
+        # Mirrors openpi `pi05_bds_vfe_sim_pick_lora_0710`: left arm + left vacuum
+        # (8 dims, padded to the model action_dim), 50 actions per chunk.
+        # The 2-frame spacing between actions is set via `data.action_stride`.
+        model=pi0_config.Pi0Config(pi05=True, action_horizon=50),
+        data=LeRobotBDSDataConfig(
+            # Only used as the norm-stats asset id:
+            # <model_path>/bds/vfe_sim_pick_success_0710/norm_stats.json
+            repo_id="bds/vfe_sim_pick_success_0710",
+            base_config=DataConfig(
+                prompt_from_task=True,
+                action_sequence_keys=("action",),
+            ),
+            extra_delta_transform=True,
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_bds_vfe_sim_pick_left",
     ),
 ]
 

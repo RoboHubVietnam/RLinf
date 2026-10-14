@@ -1,0 +1,89 @@
+# pi0.5 LoRA SFT on the BDS VR_H5D pick task (left arm + left vacuum).
+# Mirrors openpi `pi05_bds_vfe_sim_pick_lora_0710_only`:
+#   batch 64, 16.8k steps, cosine LR 2.5e-5 -> 2.5e-6 (1k warmup), 50 actions
+#   spaced 2 frames apart, 8-dim state/action (7 left-arm joints + left vacuum).
+#
+# Usage (pick a free GPU with CUDA_VISIBLE_DEVICES):
+#   CUDA_VISIBLE_DEVICES=0 bash examples/sft/run_vla_sft.sh bds_sft_openpi_pi05
+
+defaults:
+  - model/pi0_5@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: 0-0
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "bds_sft_pi05_1012"
+    logger_backends: ["tensorboard"] # wandb, swanlab
+
+  max_epochs: -1
+  max_steps: 16800
+  val_check_interval: -1
+  save_interval: 5000
+
+data:
+  train_data_paths: "/mnt/data/sftp/data/vla/data_sim_ac/20261012_VR_H5D_VFE_sim_teleop_pick_success"
+  # openpi samples frames t, t+2, ..., t+98 for each action chunk.
+  action_stride: 2
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 16
+  global_batch_size: 64
+  seed: 0
+
+  model:
+    precision: null
+    # PyTorch pi0.5 base dir. Needs the converted pi05_base weights AND
+    # bds/vfe_sim_pick_success_0710/norm_stats.json (computed on the 1012 data).
+    model_path: "/path/to/pi05_base_pytorch"
+    num_action_chunks: 50
+    action_dim: 8
+    add_value_head: False
+    # peft LoRA; not identical to openpi's gemma_2b_lora / gemma_300m_lora variants.
+    is_lora: True
+    lora_rank: 16
+    openpi:
+      config_name: "pi05_bds_vfe_sim_pick_left"
+      detach_critic_input: True
+      num_images_in_input: 2
+      train_expert_only: False
+
+  optim:
+    lr: 2.5e-5
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-08
+    weight_decay: 1e-10
+    clip_grad: 1.0
+    total_training_steps: 16800
+    lr_warmup_steps: 1000
+    lr_scheduler: "cosine"
+    num_cycles: 0.5
+    min_lr: 2.5e-6
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    use_orig_params: False
+    gradient_checkpointing: False # for openpi, gradient checkpointing is not supported, please do not change this value
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}

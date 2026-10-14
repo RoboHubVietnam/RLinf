@@ -159,6 +159,8 @@ class FSDPCfgWorker(FSDPSftWorker):
         data_cfg = self.cfg.get("data", {})
         openpi_cfg = self.cfg.actor.model.openpi
         advantage_tag = data_cfg.get("advantage_tag", None)
+        # Frame spacing between consecutive actions in a chunk (1 = every frame).
+        action_stride = int(data_cfg.get("action_stride", 1))
 
         datasets_config = data_cfg.get("train_data_paths", [])
         if not datasets_config:
@@ -195,7 +197,8 @@ class FSDPCfgWorker(FSDPSftWorker):
                 episodes=episodes,
                 delta_timestamps={
                     key: [
-                        t / dataset_meta.fps for t in range(config.model.action_horizon)
+                        t * action_stride / dataset_meta.fps
+                        for t in range(config.model.action_horizon)
                     ]
                     for key in data_config.action_sequence_keys
                 },

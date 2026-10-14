@@ -1,0 +1,130 @@
+# RECAP (advantage-conditioned CFG SFT) for pi0.5 on the BDS VR_H5D pick task.
+# Modality mirrors openpi `pi05_bds_vfe_sim_pick_lora_0710`: left arm (7 joints)
+# + left vacuum = 8 dims, 50 actions per chunk spaced 2 frames apart.
+#
+# Pipeline (see examples/recap/README.md):
+#   compute_returns_bds -> value critic -> compute_advantages (tag: bds_v1) -> this config
+#
+# Usage (single free GPU, e.g. GPU 1):
+#   export REPO_PATH=$(pwd)
+#   CUDA_VISIBLE_DEVICES=1 python examples/recap/cfg/train_cfg.py --config-name bds_cfg_openpi
+
+defaults:
+  - model/pi0_5@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - _self_
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/sft/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "bds_cfg_pi05"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 30000
+  max_steps: -1
+  val_check_interval: -1
+  save_interval: 1000
+
+data:
+  num_workers: 8
+  # Loads <dataset>/meta/advantages_{tag}.parquet from every dataset below.
+  advantage_tag: bds_v1
+
+  # openpi: 50 actions at frames t, t+2, ..., t+98 (RLinf default would be stride 1).
+  action_stride: 2
+
+  # Balance sampling weights by dataset length
+  balance_dataset_weights: true
+
+  seed: 42
+
+  # Paths are the copies written by compute_returns_bds.yaml (outputs of
+  # compute_returns/compute_advantages live next to the data, not in the originals).
+  train_data_paths:
+    - dataset_path: "/mnt/data/sftp/data/locht1/workspace/recap_bds/sft_teleop_20261006"
+      type: "sft"
+      weight: 1.0
+    - dataset_path: "/mnt/data/sftp/data/locht1/workspace/recap_bds/rollout_fail_20261006"
+      type: "rollout"
+      weight: 1.0
+    - dataset_path: "/mnt/data/sftp/data/locht1/workspace/recap_bds/rollout_timeout_20261006"
+      type: "rollout"
+      weight: 1.0
+
+algorithm:
+  adv_type: gae
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  # openpi used batch_size=64 on the JAX side.
+  micro_batch_size: 16
+  global_batch_size: 64
+  seed: 0
+
+  model:
+    precision: null
+    # PyTorch pi0.5 checkpoint dir. Must contain the converted weights AND
+    # bds/vfe_sim_pick_success_0710/norm_stats.json (asset id of the registered
+    # config `pi05_bds_vfe_sim_pick_left`). TODO: convert the JAX checkpoint
+    # vr_checkpoints/pi05_bds_vfe_sim_pick_lora_0710_only/.../16499 (LoRA merged).
+    model_path: "/path/to/pi05_bds_vfe_sim_pick_left_pytorch"
+    model_type: "cfg_model"
+    add_value_head: False
+    num_action_chunks: 50
+    action_dim: 8
+    # peft LoRA (not identical to openpi's gemma_2b_lora/gemma_300m_lora variants).
+    is_lora: True
+    lora_rank: 16
+    openpi:
+      config_name: "pi05_bds_vfe_sim_pick_left"
+      num_images_in_input: 2
+      cfgrl_guidance_scale: 1.0
+      unconditional_prob: 0.1
+      train_expert_only: False
+      guidance_type: "positive"
+      positive_only_conditional: true
+
+  optim:
+    # openpi peak/decay LR for this task.
+    lr: 2.5e-5
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    weight_decay: 1.0e-10
+    clip_grad: 1.0
+    lr_scheduler: "cosine"
+    lr_warmup_steps: 1000
+    total_training_steps: 10000
+    min_lr: 2.5e-6
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    use_orig_params: False
+    gradient_checkpointing: True
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False

@@ -49,9 +49,13 @@ class FSDPVlaSftWorker(FSDPSftWorker):
                 repo_id=repo_id,
                 data_kwargs=getattr(self.cfg.actor, "openpi_data", None),
             )
-            data_loader = openpi_data_loader.create_data_loader(
-                config, framework="pytorch", shuffle=True
-            )
+            from rlinf.models.embodiment.openpi.data_utils import action_stride_patch
+
+            action_stride = int(self.cfg.get("data", {}).get("action_stride", 1))
+            with action_stride_patch(action_stride):
+                data_loader = openpi_data_loader.create_data_loader(
+                    config, framework="pytorch", shuffle=True
+                )
             return data_loader, data_loader.data_config()
         elif SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.LINGBOTVLA

@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
+
 import numpy as np
 import openpi.models.model as _model
 import openpi.shared.normalize as normalize
@@ -22,6 +24,7 @@ import tyro
 from openpi.training.config import DataConfig
 
 from rlinf.data.lerobot_paths import resolve_lerobot_dataset_root
+from rlinf.models.embodiment.openpi.data_utils import action_stride_patch
 from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
 
 
@@ -106,7 +109,18 @@ def create_rlds_dataloader(
 def main(
     config_name: str,
     repo_id: str,
+    action_stride: int = 1,
+    output_dir: str | None = None,
 ):
+    """Compute state/actions norm stats for a LeRobot dataset.
+
+    Args:
+        config_name: Registered openpi config name.
+        repo_id: Local dataset path or LeRobot repo id.
+        action_stride: Frame spacing between actions in a chunk (match training).
+        output_dir: Directory to write ``norm_stats.json`` into. Defaults to
+            ``<assets_dir>/<repo_id>``.
+    """
     dataset_root = resolve_lerobot_dataset_root(repo_id)
     if not (dataset_root / "meta" / "info.json").is_file():
         raise FileNotFoundError(
@@ -126,13 +140,14 @@ def main(
             data_config, config.model.action_horizon, config.batch_size
         )
     else:
-        data_loader, num_batches = create_torch_dataloader(
-            data_config,
-            config.model.action_horizon,
-            config.batch_size,
-            config.model,
-            config.num_workers,
-        )
+        with action_stride_patch(action_stride):
+            data_loader, num_batches = create_torch_dataloader(
+                data_config,
+                config.model.action_horizon,
+                config.batch_size,
+                config.model,
+                config.num_workers,
+            )
 
     keys = ["state", "actions"]
     stats = {key: normalize.RunningStats() for key in keys}
@@ -143,7 +158,9 @@ def main(
 
     norm_stats = {key: stats.get_statistics() for key, stats in stats.items()}
 
-    output_path = config.assets_dirs / data_config.repo_id
+    output_path = (
+        Path(output_dir) if output_dir else config.assets_dirs / data_config.repo_id
+    )
     print(f"Writing stats to: {output_path}")
     normalize.save(output_path, norm_stats)
 
