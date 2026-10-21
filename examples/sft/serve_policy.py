@@ -25,53 +25,21 @@ peft-wrapped keys when trained with LoRA; they are merged into plain
 
 import argparse
 import logging
-import os
 import socket
 
 import openpi.policies.policy as _policy
 import openpi.transforms as transforms
+import safetensors.torch
 import torch
 from openpi.models_pytorch import pi0_pytorch
 from openpi.serving import websocket_policy_server
 from openpi.training import checkpoints as _checkpoints
 
 from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
-
-_PEFT_PREFIX = "base_model.model."
-
-
-def resolve_weights_path(checkpoint: str) -> str:
-    """Accept a global_step_<N> dir, its actor/ dir, or the .pt file itself."""
-    candidates = [
-        checkpoint,
-        os.path.join(checkpoint, "model_state_dict", "full_weights.pt"),
-        os.path.join(checkpoint, "actor", "model_state_dict", "full_weights.pt"),
-    ]
-    for path in candidates:
-        if os.path.isfile(path):
-            return path
-    raise FileNotFoundError(f"No full_weights.pt found under {checkpoint}")
-
-
-def merge_lora_state_dict(
-    state_dict: dict[str, torch.Tensor], lora_scaling: float
-) -> dict[str, torch.Tensor]:
-    """Fold peft LoRA weights into the base Linear weights and strip peft prefixes."""
-    merged = {}
-    for key, value in state_dict.items():
-        if ".lora_A." in key or ".lora_B." in key:
-            continue
-        if ".base_layer." in key:
-            module, param = key.rsplit(".base_layer.", 1)
-            if param == "weight":
-                lora_a = state_dict[f"{module}.lora_A.default.weight"].float()
-                lora_b = state_dict[f"{module}.lora_B.default.weight"].float()
-                value = (value.float() + lora_scaling * lora_b @ lora_a).to(
-                    value.dtype
-                )
-            key = f"{module}.{param}"
-        merged[key.replace(_PEFT_PREFIX, "")] = value
-    return merged
+from rlinf.models.embodiment.openpi.lora_utils import (
+    merge_lora_state_dict,
+    resolve_weights_path,
+)
 
 
 def load_model(train_config, weights_path: str, lora_scaling: float, compile: bool):
@@ -80,7 +48,10 @@ def load_model(train_config, weights_path: str, lora_scaling: float, compile: bo
         # PI0Pytorch always wraps sample_actions in torch.compile(max-autotune); the
         # first request then blocks for minutes and clients hit keepalive timeouts.
         del model.sample_actions
-    state_dict = torch.load(weights_path, map_location="cpu", mmap=True)
+    if weights_path.endswith(".safetensors"):
+        state_dict = safetensors.torch.load_file(weights_path, device="cpu")
+    else:
+        state_dict = torch.load(weights_path, map_location="cpu", mmap=True)
     num_lora = sum(".lora_A." in k for k in state_dict)
     if num_lora:
         logging.info("Merging %d LoRA adapters (scaling=%s)", num_lora, lora_scaling)
@@ -137,7 +108,8 @@ def main():
     parser.add_argument(
         "--checkpoint",
         required=True,
-        help="RLinf checkpoint: global_step_<N> dir, its actor/ dir, or full_weights.pt",
+        help="RLinf checkpoint (global_step_<N> dir, its actor/ dir, full_weights.pt) "
+        "or an exported dir holding model.safetensors",
     )
     parser.add_argument(
         "--model-path",

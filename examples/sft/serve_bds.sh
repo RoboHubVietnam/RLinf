@@ -6,6 +6,7 @@
 # Usage: [CUDA_VISIBLE_DEVICES=<gpu>] bash examples/sft/serve_bds.sh <checkpoint_dir> [port]
 #   e.g. bash examples/sft/serve_bds.sh \
 #     /mnt/data/sftp/data/vla/vr_checkpoints/rlinf/<exp_name>/<exp_name>/checkpoints/global_step_33000
+# Exported/HF checkpoint (model.safetensors + bds/<asset>/norm_stats.json): MODEL=<dir> bash $0 <dir>
 # Optional env: NUM_STEPS=<denoise steps> (default 10), COMPILE=1 (torch.compile; first request takes minutes).
 set -euo pipefail
 
