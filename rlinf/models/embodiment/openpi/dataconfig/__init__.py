@@ -464,6 +464,21 @@ _CONFIGS = [
         ),
         pytorch_weight_path="checkpoints/torch/pi05_bds_vfe_sim_pick_left",
     ),
+    TrainConfig(
+        name="pi05_bds_vfe_sim_place_left",
+        # Same as pi05_bds_vfe_sim_pick_left, trained on the 20261019 place data,
+        # with its own norm stats: <model_path>/bds/vfe_sim_place_success_1019.
+        model=pi0_config.Pi0Config(pi05=True, action_horizon=50),
+        data=LeRobotBDSDataConfig(
+            repo_id="bds/vfe_sim_place_success_1019",
+            base_config=DataConfig(
+                prompt_from_task=True,
+                action_sequence_keys=("action",),
+            ),
+            extra_delta_transform=True,
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_bds_vfe_sim_place_left",
+    ),
 ]
 
 if len({config.name for config in _CONFIGS}) != len(_CONFIGS):

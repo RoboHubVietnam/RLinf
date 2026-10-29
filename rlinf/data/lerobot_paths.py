@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -35,14 +36,14 @@ def resolve_lerobot_repo_id(data_paths: Any) -> str | None:
         return None
     if isinstance(data_paths, str):
         return data_paths
-    if isinstance(data_paths, dict):
+    if isinstance(data_paths, Mapping):
         path = data_paths.get("dataset_path", data_paths.get("data_path"))
         return str(path) if path is not None else None
-    if isinstance(data_paths, (list, tuple)):
+    if isinstance(data_paths, Sequence):
         if len(data_paths) == 0:
             return None
         first = data_paths[0]
-        if isinstance(first, dict):
+        if isinstance(first, Mapping):
             path = first.get("dataset_path", first.get("data_path"))
             if path is None:
                 raise ValueError(
@@ -51,6 +52,14 @@ def resolve_lerobot_repo_id(data_paths: Any) -> str | None:
             return str(path)
         return str(first)
     return str(data_paths)
+
+
+def resolve_lerobot_repo_ids(data_paths: Any) -> list[str]:
+    """Extract every LeRobot repo id or local path from ``data.train_data_paths``."""
+    if isinstance(data_paths, Sequence) and not isinstance(data_paths, str):
+        return [resolve_lerobot_repo_id(entry) for entry in data_paths]
+    repo_id = resolve_lerobot_repo_id(data_paths)
+    return [] if repo_id is None else [repo_id]
 
 
 def resolve_lerobot_dataset_root(data_path: str) -> Path:

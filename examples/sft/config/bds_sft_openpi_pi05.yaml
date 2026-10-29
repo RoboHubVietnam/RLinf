@@ -1,10 +1,10 @@
 # pi0.5 LoRA SFT on the BDS VR_H5D pick task (left arm + left vacuum).
 # Mirrors openpi `pi05_bds_vfe_sim_pick_lora_0710_only`:
-#   batch 64, 16.8k steps, cosine LR 2.5e-5 -> 2.5e-6 (1k warmup), 50 actions
+#   batch 64, 20 epochs over 20261012 + 20261006 teleop success, cosine LR 2.5e-5 -> 2.5e-6 (1k warmup), 50 actions
 #   spaced 2 frames apart, 8-dim state/action (7 left-arm joints + left vacuum).
 #
 # Usage (pick a free GPU with CUDA_VISIBLE_DEVICES):
-#   CUDA_VISIBLE_DEVICES=0 bash examples/sft/run_vla_sft.sh bds_sft_openpi_pi05
+#   CUDA_VISIBLE_DEVICES=0 bash examples/sft/run_bds_sft.sh <exp_name>
 
 defaults:
   - model/pi0_5@actor.model
@@ -26,18 +26,23 @@ cluster:
 runner:
   task_type: sft
   logger:
-    log_path: "../results"
-    project_name: rlinf
+    # run_bds_sft.sh overrides log_path/experiment_name to
+    # /mnt/data/sftp/data/vla/vr_checkpoints/rlinf/<exp_name>
+    log_path: "/mnt/data/sftp/data/vla/vr_checkpoints/rlinf/bds_sft_pi05_1012"
+    project_name: rlinf-bds
     experiment_name: "bds_sft_pi05_1012"
-    logger_backends: ["tensorboard"] # wandb, swanlab
+    logger_backends: ["wandb", "tensorboard"]
 
-  max_epochs: -1
-  max_steps: 16800
+  max_epochs: 20
+  max_steps: -1
   val_check_interval: -1
   save_interval: 5000
 
 data:
-  train_data_paths: "/mnt/data/sftp/data/vla/data_sim_ac/20261012_VR_H5D_VFE_sim_teleop_pick_success"
+  # All datasets are concatenated (same features); norm stats are computed on the union.
+  train_data_paths:
+    - "/mnt/data/sftp/data/vla/data_sim_ac/20261012_VR_H5D_VFE_sim_teleop_pick_success"
+    - "/mnt/data/sftp/data/vla/data_sim_ac/20261006_VR_H5D_VFE_sim_teleop_pick_success_openpi"
   # openpi samples frames t, t+2, ..., t+98 for each action chunk.
   action_stride: 2
 
@@ -52,7 +57,7 @@ actor:
     precision: null
     # PyTorch pi0.5 base dir. Needs the converted pi05_base weights AND
     # bds/vfe_sim_pick_success_0710/norm_stats.json (computed on the 1012 data).
-    model_path: "/path/to/pi05_base_pytorch"
+    model_path: "/mnt/data/sftp/data/vla/vr_pretrained_checkpoints/pi05_base_pytorch"
     num_action_chunks: 50
     action_dim: 8
     add_value_head: False
@@ -72,7 +77,8 @@ actor:
     adam_eps: 1.0e-08
     weight_decay: 1e-10
     clip_grad: 1.0
-    total_training_steps: 16800
+    # 20 epochs * (105602 frames / batch 64) ~= 33000 steps for the cosine schedule
+    total_training_steps: 33000
     lr_warmup_steps: 1000
     lr_scheduler: "cosine"
     num_cycles: 0.5
@@ -81,7 +87,7 @@ actor:
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "no_shard"
-    use_orig_params: False
+    use_orig_params: True
     gradient_checkpointing: False # for openpi, gradient checkpointing is not supported, please do not change this value
     mixed_precision:
       param_dtype: ${actor.model.precision}

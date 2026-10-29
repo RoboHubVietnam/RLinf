@@ -110,6 +110,7 @@ def main(
     config_name: str,
     repo_id: str,
     action_stride: int = 1,
+    extra_repo_ids: list[str] | None = None,
     output_dir: str | None = None,
 ):
     """Compute state/actions norm stats for a LeRobot dataset.
@@ -118,6 +119,7 @@ def main(
         config_name: Registered openpi config name.
         repo_id: Local dataset path or LeRobot repo id.
         action_stride: Frame spacing between actions in a chunk (match training).
+        extra_repo_ids: Extra datasets pooled with ``repo_id`` for the statistics.
         output_dir: Directory to write ``norm_stats.json`` into. Defaults to
             ``<assets_dir>/<repo_id>``.
     """
@@ -140,7 +142,7 @@ def main(
             data_config, config.model.action_horizon, config.batch_size
         )
     else:
-        with action_stride_patch(action_stride):
+        with action_stride_patch(action_stride, extra_repo_ids):
             data_loader, num_batches = create_torch_dataloader(
                 data_config,
                 config.model.action_horizon,

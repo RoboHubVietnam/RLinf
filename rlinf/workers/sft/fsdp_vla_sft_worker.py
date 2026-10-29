@@ -19,7 +19,10 @@ from omegaconf import DictConfig
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from rlinf.config import SupportedModel
-from rlinf.data.lerobot_paths import resolve_lerobot_repo_id
+from rlinf.data.lerobot_paths import (
+    resolve_lerobot_repo_id,
+    resolve_lerobot_repo_ids,
+)
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.utils.utils import get_rng_state, set_rng_state
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
@@ -52,7 +55,9 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             from rlinf.models.embodiment.openpi.data_utils import action_stride_patch
 
             action_stride = int(self.cfg.get("data", {}).get("action_stride", 1))
-            with action_stride_patch(action_stride):
+            with action_stride_patch(
+                action_stride, resolve_lerobot_repo_ids(data_paths)[1:]
+            ):
                 data_loader = openpi_data_loader.create_data_loader(
                     config, framework="pytorch", shuffle=True
                 )
