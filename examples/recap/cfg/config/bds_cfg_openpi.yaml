@@ -5,9 +5,9 @@
 # Pipeline (see examples/recap/README.md):
 #   compute_returns_bds -> value critic -> compute_advantages (tag: bds_v1) -> this config
 #
-# Usage (single free GPU, e.g. GPU 1):
+# Usage (single free GPU):
 #   export REPO_PATH=$(pwd)
-#   CUDA_VISIBLE_DEVICES=1 python examples/recap/cfg/train_cfg.py --config-name bds_cfg_openpi
+#   python examples/recap/cfg/train_cfg.py --config-name bds_cfg_openpi cluster.component_placement.actor=<gpu>
 
 defaults:
   - model/pi0_5@actor.model
@@ -25,18 +25,20 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: all
+    # Physical GPU index (RLinf ignores CUDA_VISIBLE_DEVICES); override with
+    # cluster.component_placement.actor=<gpu>.
+    actor: 0-0
 
 runner:
   task_type: sft
   logger:
-    log_path: "../results"
-    project_name: rlinf
-    experiment_name: "bds_cfg_pi05"
-    logger_backends: ["tensorboard"]
+    log_path: "/mnt/data/sftp/data/vla/vr_checkpoints/rlinf/bds_recap/bds_cfg_pi05_v1"
+    project_name: rlinf-bds
+    experiment_name: "bds_cfg_pi05_v1"
+    logger_backends: ["tensorboard", "wandb"]
 
   max_epochs: 30000
-  max_steps: -1
+  max_steps: 10000
   val_check_interval: -1
   save_interval: 1000
 
@@ -56,13 +58,16 @@ data:
   # Paths are the copies written by compute_returns_bds.yaml (outputs of
   # compute_returns/compute_advantages live next to the data, not in the originals).
   train_data_paths:
-    - dataset_path: "/mnt/data/sftp/data/locht1/workspace/recap_bds/sft_teleop_20261006"
+    - dataset_path: "/mnt/data/sftp/data/locht1/workspace/recap_bds/20261012_VR_H5D_VFE_sim_teleop_pick_success_openpi_recap"
       type: "sft"
       weight: 1.0
-    - dataset_path: "/mnt/data/sftp/data/locht1/workspace/recap_bds/rollout_fail_20261006"
+    - dataset_path: "/mnt/data/sftp/data/locht1/workspace/recap_bds/20261006_VR_H5D_VFE_sim_teleop_pick_success_openpi_recap"
+      type: "sft"
+      weight: 1.0
+    - dataset_path: "/mnt/data/sftp/data/locht1/workspace/recap_bds/20261006_VR_H5D_VFE_sim_infer_pick_fail_openpi_recap"
       type: "rollout"
       weight: 1.0
-    - dataset_path: "/mnt/data/sftp/data/locht1/workspace/recap_bds/rollout_timeout_20261006"
+    - dataset_path: "/mnt/data/sftp/data/locht1/workspace/recap_bds/20261006_VR_H5D_VFE_sim_infer_pick_timeout_openpi_recap"
       type: "rollout"
       weight: 1.0
 
@@ -79,11 +84,12 @@ actor:
 
   model:
     precision: null
-    # PyTorch pi0.5 checkpoint dir. Must contain the converted weights AND
-    # bds/vfe_sim_pick_success_0710/norm_stats.json (asset id of the registered
-    # config `pi05_bds_vfe_sim_pick_left`). TODO: convert the JAX checkpoint
-    # vr_checkpoints/pi05_bds_vfe_sim_pick_lora_0710_only/.../16499 (LoRA merged).
-    model_path: "/path/to/pi05_bds_vfe_sim_pick_left_pytorch"
+    # Plain PyTorch pi0.5 dir with model.safetensors AND
+    # bds/vfe_sim_pick_success_0710/norm_stats.json. Exported (LoRA merged) from the
+    # SFT run bds_sft_pi05_1012_1006/global_step_33000 with
+    # examples/recap/process/export_openpi_checkpoint.py. Do not point this at an
+    # RLinf LoRA checkpoint dir: its peft keys are silently dropped on load.
+    model_path: "/mnt/data/sftp/data/locht1/workspace/recap_bds/base_bds_sft_pi05_1012_1006_33000"
     model_type: "cfg_model"
     add_value_head: False
     num_action_chunks: 50
@@ -116,8 +122,8 @@ actor:
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "no_shard"
-    use_orig_params: False
-    gradient_checkpointing: True
+    use_orig_params: True # LoRA: frozen base + trainable adapters need mixed requires_grad
+    gradient_checkpointing: False # not supported for openpi (see bds_sft_openpi_pi05.yaml)
     mixed_precision:
       param_dtype: ${actor.model.precision}
       reduce_dtype: ${actor.model.precision}

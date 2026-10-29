@@ -1,0 +1,78 @@
+# RECAP stage 3: per-step advantages for the BDS VR_H5D pick task.
+#   A = normalize(r_{t:t+N}) + V(o_{t+N}) - V(o_t), then the top quantile per data
+#   type is labelled positive. Writes meta/advantages_{tag}.parquet next to the data.
+#
+# Usage:
+#   cd examples/recap/process && CUDA_VISIBLE_DEVICES=<gpu> python compute_advantages.py \
+#     --config-name compute_advantages_bds advantage.value_checkpoint=<value global_step dir>
+
+defaults:
+  - model/value@advantage.model
+
+advantage:
+  value_checkpoint: /mnt/data/sftp/data/locht1/workspace/RLinf/logs/value_sft/bds_sft_value-20261021-11:56:43/bds_value_v1/checkpoints/global_step_3000
+  batch_size: 128
+  flush_interval: 256
+  num_dataloader_workers_per_gpu: 8
+  prefetch_factor: 2
+  discount_next_value: true
+
+  # Fallback quantile for types not listed below.
+  positive_quantile: 0.3
+  # Calibrate per data type (README rule 2): demos are not forced positive.
+  positive_quantile_by_type:
+    sft: 0.3
+    rollout: 0.4
+  sft_force_positive: false
+
+  tag: "bds_v1"
+  returns_tag: "bds_v1"
+
+  model:
+    critic_expert_variant: "gemma_1m"
+    tokenizer_path: /mnt/data/sftp/data/vla/vr_pretrained_checkpoints/gemma-3-270m
+    siglip_path: /mnt/data/sftp/data/vla/vr_pretrained_checkpoints/siglip2-so400m-patch14-224
+    gemma3_path: /mnt/data/sftp/data/vla/vr_pretrained_checkpoints/gemma-3-270m
+
+data:
+  model_type: "pi05"
+  robot_type: "bds"
+
+  train_data_paths:
+    - dataset_path: "/mnt/data/sftp/data/locht1/workspace/recap_bds/20261012_VR_H5D_VFE_sim_teleop_pick_success_openpi_recap"
+      robot_type: "bds"
+      type: "sft"
+      weight: 1.0
+    - dataset_path: "/mnt/data/sftp/data/locht1/workspace/recap_bds/20261006_VR_H5D_VFE_sim_teleop_pick_success_openpi_recap"
+      robot_type: "bds"
+      type: "sft"
+      weight: 1.0
+    - dataset_path: "/mnt/data/sftp/data/locht1/workspace/recap_bds/20261006_VR_H5D_VFE_sim_infer_pick_fail_openpi_recap"
+      robot_type: "bds"
+      type: "rollout"
+      weight: 1.0
+    - dataset_path: "/mnt/data/sftp/data/locht1/workspace/recap_bds/20261006_VR_H5D_VFE_sim_infer_pick_timeout_openpi_recap"
+      robot_type: "bds"
+      type: "rollout"
+      weight: 1.0
+
+  # N frames of lookahead (25 fps). An action chunk spans 100 frames (50 actions,
+  # stride 2), so N=10 would compare values only 0.4 s apart.
+  advantage_lookahead_step: 50
+  gamma: 1.0
+
+  # Must match the value model training range.
+  return_min: -2580.0
+  return_max: 0.0
+
+distributed:
+  enabled: false
+  backend: "nccl"
+  timeout: 3600
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job:
+    chdir: false

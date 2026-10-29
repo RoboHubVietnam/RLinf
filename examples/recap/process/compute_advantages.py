@@ -201,6 +201,13 @@ KEY_MAPPINGS = {
         "observation.state.gripper_pose": "observation/state/gripper_pose",
         "task": "prompt",
     },
+    "bds": {
+        # BDSInputs reads the LeRobot keys directly.
+        "observation.images.color.head": "observation.images.color.head",
+        "observation.images.color.outside": "observation.images.color.outside",
+        "observation.state": "observation.state",
+        "task": "prompt",
+    },
     "libero": {
         # LeRobot v2.x (IPEC) key format
         "observation.images.image": "observation/image",

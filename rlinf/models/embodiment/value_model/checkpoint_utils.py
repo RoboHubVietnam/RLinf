@@ -151,7 +151,11 @@ def build_input_transforms(
     import openpi.models.model as _openpi_model
     import openpi.transforms as _openpi_transforms
 
-    from rlinf.models.embodiment.openpi.policies import franka_policy, libero_policy
+    from rlinf.models.embodiment.openpi.policies import (
+        bds_policy,
+        franka_policy,
+        libero_policy,
+    )
 
     _mt_map = {
         "pi0": _openpi_model.ModelType.PI0,
@@ -165,6 +169,16 @@ def build_input_transforms(
     if env_type == "libero":
         input_transforms.append(_openpi_transforms.InjectDefaultPrompt(default_prompt))
         input_transforms.append(libero_policy.LiberoInputs(model_type=model_type_enum))
+
+    elif env_type == "bds":
+        input_transforms.append(_openpi_transforms.InjectDefaultPrompt(default_prompt))
+        input_transforms.append(
+            bds_policy.BDSInputs(
+                model_type=model_type_enum,
+                state_indices=bds_policy.LEFT_STATE_INDICES,
+                action_indices=bds_policy.LEFT_ACTION_INDICES,
+            )
+        )
 
     elif env_type in ("franka", "franka_co_train"):
         input_transforms.append(_openpi_transforms.InjectDefaultPrompt(default_prompt))

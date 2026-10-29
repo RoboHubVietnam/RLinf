@@ -33,7 +33,11 @@ from lerobot.common.datasets.lerobot_dataset import (
 from openpi.transforms import DataTransformFn
 from torch.utils.data import Dataset
 
-from rlinf.models.embodiment.openpi.policies import franka_policy, libero_policy
+from rlinf.models.embodiment.openpi.policies import (
+    bds_policy,
+    franka_policy,
+    libero_policy,
+)
 
 from .common import BaseDataLoaderImpl, ReCapMixtureDataset
 from .utils import (
@@ -62,6 +66,14 @@ _REPACK_KEYS = {
         "observation/image": "observation.images.image",
         "observation/wrist_image": "observation.images.wrist_image",
         "observation/state": "observation.state",
+        "actions": "action",
+        "prompt": "prompt",
+    },
+    # BDSInputs reads the LeRobot keys directly.
+    "bds": {
+        "observation.images.color.head": "observation.images.color.head",
+        "observation.images.color.outside": "observation.images.color.outside",
+        "observation.state": "observation.state",
         "actions": "action",
         "prompt": "prompt",
     },
@@ -317,6 +329,14 @@ class ValueDataset(Dataset):
         if robot in ("libero", "libero_v2"):
             transforms_list.append(
                 libero_policy.LiberoInputs(model_type=model_type_enum)
+            )
+        elif robot == "bds":
+            transforms_list.append(
+                bds_policy.BDSInputs(
+                    model_type=model_type_enum,
+                    state_indices=bds_policy.LEFT_STATE_INDICES,
+                    action_indices=bds_policy.LEFT_ACTION_INDICES,
+                )
             )
         elif robot in ("franka", "franka_co_train"):
             transforms_list.append(

@@ -12,28 +12,34 @@ data:
   data_root: null
 
   train_data_paths:
-    # Teleop demonstrations: all episodes successful (reward=-1/step, last=0).
-    - dataset_path: /mnt/data/sftp/data/vla/data_sim_ac/20261006_VR_H5D_VFE_sim_teleop_pick_success_openpi
-      output_path: /mnt/data/sftp/data/locht1/workspace/recap_bds/sft_teleop_20261006
+    # Teleop demonstrations (the SFT data of the base checkpoint
+    # bds_sft_pi05_1012_1006): all episodes successful (reward=-1/step, last=0).
+    - dataset_path: /mnt/data/sftp/data/vla/data_sim_ac/20261012_VR_H5D_VFE_sim_teleop_pick_success
+      output_path: /mnt/data/sftp/data/locht1/workspace/recap_bds/20261012_VR_H5D_VFE_sim_teleop_pick_success_openpi_recap
       type: sft
-    # Policy rollouts: success is read from `success_key` at the last frame.
+    - dataset_path: /mnt/data/sftp/data/vla/data_sim_ac/20261006_VR_H5D_VFE_sim_teleop_pick_success_openpi
+      output_path: /mnt/data/sftp/data/locht1/workspace/recap_bds/20261006_VR_H5D_VFE_sim_teleop_pick_success_openpi_recap
+      type: sft
+    # Policy rollouts, all failed or timed out. Their `next.reward` (-1 every frame)
+    # and `next.done` (last frame) match what compute_returns builds itself, so
+    # only the terminal failure penalty is added here.
     - dataset_path: /mnt/data/sftp/data/vla/data_sim_ac/20261006_VR_H5D_VFE_sim_infer_pick_fail
-      output_path: /mnt/data/sftp/data/locht1/workspace/recap_bds/rollout_fail_20261006
+      output_path: /mnt/data/sftp/data/locht1/workspace/recap_bds/20261006_VR_H5D_VFE_sim_infer_pick_fail_openpi_recap
       type: rollout
     - dataset_path: /mnt/data/sftp/data/vla/data_sim_ac/20261006_VR_H5D_VFE_sim_infer_pick_timeout
-      output_path: /mnt/data/sftp/data/locht1/workspace/recap_bds/rollout_timeout_20261006
+      output_path: /mnt/data/sftp/data/locht1/workspace/recap_bds/20261006_VR_H5D_VFE_sim_infer_pick_timeout_openpi_recap
       type: rollout
 
   dataset_type: "sft"
   gamma: 1.0
-  # Reward on the last step of failed / timed-out episodes (RLinf LIBERO default;
-  # BDS episodes are 300-2000 frames long, so revisit if returns look degenerate).
-  failure_reward: -300.0
+  # Reward on the last step of failed / timed-out episodes. Longer than the longest
+  # successful demo (469 frames), so every failure state has a lower return than
+  # every success state. Returns then span about [-2580, 0].
+  failure_reward: -500.0
 
   # Per-frame column holding the episode success flag (read at the last frame,
-  # truthy = success). NOTE: in the existing infer fail/timeout data this column
-  # is 0 on every frame and no success example was available to confirm 1=success.
-  # CONFIRM before running; replace with your own column name if different.
+  # truthy = success). It is 0 on every frame of the fail/timeout rollouts, so
+  # they are all treated as failures. Change it before adding successful rollouts.
   success_key: annotation.human.validity
 
   tag: bds_v1
