@@ -1,5 +1,11 @@
 # RECAP on GR00T N1.7 / LIBERO-Long from a 44% SFT base — final results
 
+> **RETRACTED as a conditioning result (control experiment of 2026-07-31).**
+> The same checkpoint scores 58.4% with conditioning off, 58.0% with the
+> positive label and 59.8% with the negative label (n=500 each; base 44.2%).
+> The gain over the base is extra SFT; the 65.4% figure does not reproduce.
+> See `examples/recap/README.md`. The record below is kept unchanged for history.
+
 **Headline (n=500 per arm, 5 seeds x 100 episodes, randomized resets):**
 
 | Arm | SR | 95% CI |

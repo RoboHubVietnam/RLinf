@@ -13,12 +13,11 @@ advantage:
   num_dataloader_workers_per_gpu: 0
 
   sft_force_positive: false
-  # NOTE 2026-08-26: label DIRECTION IS CONTESTED. Our code's positive_quantile
-  # = FRACTION POSITIVE (verified empirically). One reading of the RECAP paper
-  # (arXiv:2511.14759 Sec V-D, 30th-percentile threshold + I_t=1(A>eps)) gives
-  # ~70% positive; the RLinf docs and the paper appendix (~30% pretrain / 40%
-  # finetune) point to ~30% positive. Weight of evidence favours ~30%, so these
-  # are the ORIGINAL values. Settle vs the paper before relying on this.
+  # Label fraction (settled against the paper): positive_quantile is the
+  # FRACTION of steps labeled positive. RECAP (arXiv:2511.14759, Appendix A-F)
+  # labels ~30% of demonstration steps and ~40% of rollout steps positive.
+  # Do not read Sec V-D's "30% percentile" as ~70% positive. The paper's other
+  # "30%" is the indicator-dropout rate and is unrelated to this threshold.
   positive_quantile_by_type:
     rollout: 0.4
     sft: 0.3
